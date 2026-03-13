@@ -56,6 +56,26 @@ function buildDefaultPresets() {
 
 const defPresets = buildDefaultPresets();
 
+function mergePresetsWithDB(existingPresets = []) {
+  const dbPresets = buildDefaultPresets();
+  const keyOf = (p) => `${p.category}__${p.name}`.trim().toLowerCase();
+
+  const existingMap = new Map((existingPresets || []).map((p) => [
+    keyOf(p),
+    { photo: "", youtube: "", ...p }
+  ]));
+
+  const merged = dbPresets.map((dbPreset) => {
+    const found = existingMap.get(keyOf(dbPreset));
+    return found ? { ...dbPreset, ...found, id: found.id || dbPreset.id } : dbPreset;
+  });
+
+  const dbKeySet = new Set(dbPresets.map((p) => keyOf(p)));
+  const customOnly = (existingPresets || []).filter((p) => !dbKeySet.has(keyOf(p)));
+
+  return [...merged, ...customOnly];
+}
+
 // ─── 평균값 ───
 const AVG={male:{muscle:{"155":26,"160":27.5,"165":29,"170":30.5,"175":32,"180":33.5,"185":35,"190":36.5},fatPct:{"155":19,"160":18,"165":18,"170":17,"175":17,"180":16,"185":16,"190":15},weight:{"155":58,"160":62,"165":66,"170":70,"175":74,"180":78,"185":82,"190":86},bodyWater:{"155":33,"160":35,"165":37,"170":39,"175":41,"180":43,"185":45,"190":47},bmr:{"155":1380,"160":1420,"165":1480,"170":1540,"175":1590,"180":1650,"185":1710,"190":1770}},female:{muscle:{"145":18.5,"150":19.5,"155":20.5,"160":21.5,"165":22.5,"170":23.5,"175":24.5,"180":25.5},fatPct:{"145":27,"150":26,"155":26,"160":25,"165":25,"170":24,"175":24,"180":23},weight:{"145":46,"150":49,"155":52,"160":55,"165":58,"170":61,"175":64,"180":67},bodyWater:{"145":24,"150":26,"155":27,"160":29,"165":30,"170":32,"175":33,"180":35},bmr:{"145":1100,"150":1140,"155":1180,"160":1220,"165":1260,"170":1300,"175":1340,"180":1380}}};
 function getA(g,h,f){if(!g||!h)return null;const d=AVG[g];if(!d?.[f])return null;return d[f][String(Math.max(145,Math.min(190,Math.round(Number(h)/5)*5)))]||null;}
@@ -142,8 +162,8 @@ const WG=`배꼽 바로 위를 줄자로 수평하게 감아 측정합니다.\n�
 
 function migrateData(raw){
   const safe=raw||{};
-  const trainer=safe.trainer||(safe.trainerPin?{pin:safe.trainerPin}:{pin:"1234"});
-  const presets=(safe.presets||defPresets).map(p=>({photo:"",youtube:"",...p}));
+  const trainer={loginId:"hyungmin",password:"VangoFit!2026#",pin:"1234",failedAttempts:0,lockUntil:0,...(safe.trainer||(safe.trainerPin?{pin:safe.trainerPin}:{}))};
+  const presets=mergePresetsWithDB((safe.presets||[]).map(p=>({photo:"",youtube:"",...p})));
   const customRoutines=Array.isArray(safe.customRoutines)?safe.customRoutines:[];
   const sourceClients=(safe.clients&&safe.clients.length?safe.clients:importedClients)||[];
   const clients=sourceClients.map((c,idx)=>({
@@ -199,7 +219,8 @@ function AttendanceView({client,isTrainer,onSave,onSavePT}){
   const daysInMonth=new Date(yr,mo,0).getDate();const monthRate=daysInMonth>0?Math.round((monthDays/daysInMonth)*100):0;
   const earnedBadges=BADGES.filter(b=>totalDays>=b.days);const nextBadge=BADGES.find(b=>totalDays<b.days);
   const firstDay=new Date(yr,mo-1,1).getDay();const calDays=[];for(let i=0;i<firstDay;i++)calDays.push(null);for(let i=1;i<=daysInMonth;i++)calDays.push(i);
-  const isChk=d=>d&&att.some(a=>a.date===`${month}-${String(d).padStart(2,"0")}`);
+  const hasWorkout=d=>d&&att.some(a=>a.date===`${month}-${String(d).padStart(2,"0")}`);
+  const hasLesson=d=>d&&((client.sessions||[]).some(s=>s.date===`${month}-${String(d).padStart(2,"0")}`));
   const getAtt=d=>att.find(a=>a.date===`${month}-${String(d).padStart(2,"0")}`);
   const totalMin=att.reduce((s,a)=>s+(a.strength||0)+(a.cardio||0),0);
   const completed=getCompletedSessions(client);
@@ -225,9 +246,9 @@ function AttendanceView({client,isTrainer,onSave,onSavePT}){
     <div style={{background:C.card,borderRadius:"14px",padding:"14px",marginBottom:"12px",border:`1px solid ${C.border}`}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}><Btn variant="ghost" onClick={()=>{const d=new Date(yr,mo-2,1);setMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);}} style={{padding:"3px 8px"}}>◀</Btn><span style={{fontSize:"14px",fontWeight:700}}>{yr}년 {mo}월</span><Btn variant="ghost" onClick={()=>{const d=new Date(yr,mo,1);setMonth(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);}} style={{padding:"3px 8px"}}>▶</Btn></div>
       <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px",textAlign:"center",marginBottom:"3px"}}>{["일","월","화","수","목","금","토"].map(d=><div key={d} style={{fontSize:"9px",color:C.td,padding:"3px"}}>{d}</div>)}</div>
-      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px"}}>{calDays.map((day,i)=>{if(!day)return <div key={i}/>;const chk=isChk(day);const isT=`${month}-${String(day).padStart(2,"0")}`===today;
-        return <div key={i} onClick={()=>{const ds=`${month}-${String(day).padStart(2,"0")}`;setLogDate(ds);const a=getAtt(day);setLogStr(a?String(a.strength||""):"");setLogCard(a?String(a.cardio||""):"");setShowLog(true);}} style={{textAlign:"center",padding:"5px 2px",borderRadius:"8px",cursor:"pointer",background:chk?C.ag:"transparent",border:isT?`2px solid ${C.accent}`:"2px solid transparent"}}><div style={{fontSize:"12px",fontWeight:chk?700:400,color:chk?C.accent:C.text}}>{day}</div>{chk&&<div style={{fontSize:"6px",color:C.accent}}>●</div>}</div>;})}</div>
-      <div style={{display:"flex",justifyContent:"space-between",marginTop:"8px",fontSize:"10px",color:C.td}}><span>{monthDays}일 운동</span><span>근력 {att.filter(a=>a.date.startsWith(month)).reduce((s,a)=>s+(a.strength||0),0)}분 · 유산소 {att.filter(a=>a.date.startsWith(month)).reduce((s,a)=>s+(a.cardio||0),0)}분</span></div>
+      <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:"2px"}}>{calDays.map((day,i)=>{if(!day)return <div key={i}/>;const workout=hasWorkout(day);const lesson=hasLesson(day);const isT=`${month}-${String(day).padStart(2,"0")}`===today;
+        return <div key={i} onClick={()=>{const ds=`${month}-${String(day).padStart(2,"0")}`;setLogDate(ds);const a=getAtt(day);setLogStr(a?String(a.strength||""):"");setLogCard(a?String(a.cardio||""):"");setShowLog(true);}} style={{textAlign:"center",padding:"5px 2px",borderRadius:"8px",cursor:"pointer",background:workout?C.ag:"transparent",border:isT?`2px solid ${C.accent}`:"2px solid transparent"}}><div style={{fontSize:"12px",fontWeight:(workout||lesson)?700:400,color:(workout||lesson)?C.accent:C.text}}>{day}</div><div style={{display:"flex",justifyContent:"center",gap:"3px",marginTop:"1px",minHeight:"8px"}}>{lesson&&<span style={{width:"6px",height:"6px",borderRadius:"50%",background:C.danger,display:"inline-block"}} />} {workout&&<span style={{width:"6px",height:"6px",borderRadius:"50%",background:C.success,display:"inline-block"}} />}</div></div>;})}</div>
+      <div style={{display:"flex",justifyContent:"space-between",marginTop:"8px",fontSize:"10px",color:C.td}}><span>{monthDays}일 운동</span><span>근력 {att.filter(a=>a.date.startsWith(month)).reduce((s,a)=>s+(a.strength||0),0)}분 · 유산소 {att.filter(a=>a.date.startsWith(month)).reduce((s,a)=>s+(a.cardio||0),0)}분</span></div><div style={{display:"flex",gap:"12px",marginTop:"8px",fontSize:"10px",color:C.td,flexWrap:"wrap"}}><span style={{display:"flex",alignItems:"center",gap:"5px"}}><span style={{width:"8px",height:"8px",borderRadius:"50%",background:C.danger,display:"inline-block"}} /> 레슨한 날</span><span style={{display:"flex",alignItems:"center",gap:"5px"}}><span style={{width:"8px",height:"8px",borderRadius:"50%",background:C.success,display:"inline-block"}} /> 개인 운동한 날</span></div>
     </div>
 
     {!att.some(a=>a.date===today)&&<Btn onClick={()=>{setLogDate(today);setLogStr("");setLogCard("");setShowLog(true);}} style={{width:"100%",marginBottom:"12px",padding:"14px",fontSize:"15px"}}>오늘 운동 기록하기 💪</Btn>}
@@ -362,48 +383,79 @@ function SesForm({presets,session,onSave,onClose}){
 function AddCl({onSave,onClose,pins}){const[n,setN]=useState("");const[ph,setPh]=useState("");const[pin,setPin]=useState("");const dup=pin&&pins.includes(pin);
 return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"20px"}} onClick={onClose}><div style={{background:C.card,borderRadius:"20px",padding:"22px",width:"100%",maxWidth:"380px",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}><div style={{fontSize:"16px",fontWeight:800,marginBottom:"12px"}}>새 회원</div><Fd label="이름"><input value={n} onChange={e=>setN(e.target.value)} style={bi}/></Fd><Fd label="연락처"><input value={ph} onChange={e=>setPh(e.target.value)} style={bi} placeholder="010-0000-0000"/></Fd><Fd label="PIN(4자리)"><input value={pin} onChange={e=>setPin(e.target.value)} style={bi} maxLength={4}/></Fd>{dup&&<div style={{color:C.danger,fontSize:"10px",marginBottom:"4px"}}>이미 사용 중</div>}<Btn onClick={()=>{if(n.trim()&&pin.length===4&&!dup)onSave({id:gid(),name:n.trim(),phone:ph,pin,gender:"",age:"",goals:{targetWeight:"",targetFatPct:"",targetMuscle:""},notes:{injuries:"",surgery:"",conditions:"",experience:""},pt:{startDate:"",endDate:"",totalSessions:0,baseCompletedSessions:0},attendance:[],inbodyHistory:[],customRoutines:[],sessions:[]});}} style={{width:"100%"}}>등록</Btn></div></div>;}
 
-function PresetMgr({presets,onSave,onClose}){const[list,setList]=useState([...(presets||[])]);const[sa,setSa]=useState(false);const[nn,setNn]=useState("");const[nc,setNc]=useState("하체");const[np,setNp]=useState("");const[ny,setNy]=useState("");const fr=useRef(null);const[detail,setDetail]=useState(null);
-return <><div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"16px"}} onClick={onClose}><div style={{background:C.card,borderRadius:"20px",padding:"22px",width:"100%",maxWidth:"500px",maxHeight:"85vh",overflowY:"auto",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
-<div style={{display:"flex",justifyContent:"space-between",marginBottom:"10px"}}><span style={{fontSize:"15px",fontWeight:800}}>종목 관리</span><Btn variant="ghost" onClick={onClose}>✕</Btn></div>
-<div style={{fontSize:"10px",color:C.td,marginBottom:"10px"}}>기구 사진과 유튜브 영상 링크를 등록하면 회원님들이 확인할 수 있어요</div>
-{list.map(p=><div key={p.id} style={{display:"flex",alignItems:"center",gap:"6px",padding:"6px",background:C.bg,borderRadius:"6px",marginBottom:"3px"}}>
-  {p.photo?<img src={p.photo} alt="" style={{width:28,height:28,borderRadius:"4px",objectFit:"cover",cursor:"pointer"}} onClick={()=>setDetail(p)}/>:<div style={{width:28,height:28,borderRadius:"4px",background:C.ag,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px"}}>🏋️</div>}
-  <div style={{flex:1,cursor:"pointer"}} onClick={()=>setDetail(p)}><div style={{fontSize:"11px",fontWeight:600}}>{p.name}</div><div style={{fontSize:"8px",color:C.td}}>{p.category}{p.youtube?" · 📹":""}</div></div>
-  <Btn variant="danger" onClick={()=>setList(list.filter(x=>x.id!==p.id))} style={{padding:"3px 6px"}}>삭제</Btn>
-</div>)}
-{sa?<div style={{background:C.bg,borderRadius:"8px",padding:"12px",marginTop:"8px"}}>
-  <Fd label="운동 이름"><input value={nn} onChange={e=>setNn(e.target.value)} style={bi}/></Fd>
-  <Fd label="카테고리"><div style={{display:"flex",gap:"3px",flexWrap:"wrap"}}>{["하체","가슴","등","어깨","팔","복근","기타"].map(c=><button key={c} onClick={()=>setNc(c)} style={{padding:"4px 10px",borderRadius:"14px",border:"none",fontSize:"10px",fontWeight:600,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif",background:nc===c?C.ag:C.card,color:nc===c?C.accent:C.td}}>{c}</button>)}</div></Fd>
-  <Fd label="기구 사진 (선택)"><div style={{display:"flex",gap:"6px",alignItems:"center"}}>{np&&<img src={np} alt="" style={{width:36,height:36,borderRadius:"5px",objectFit:"cover"}}/>}<input type="file" accept="image/*" ref={fr} onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setNp(ev.target.result);r.readAsDataURL(f);}}} style={{display:"none"}}/><Btn variant="secondary" onClick={()=>fr.current?.click()} style={{fontSize:"10px",padding:"5px 10px"}}>{np?"변경":"사진 추가"}</Btn></div></Fd>
-  <Fd label="유튜브 링크 (선택)"><input value={ny} onChange={e=>setNy(e.target.value)} style={bi} placeholder="https://youtube.com/..."/></Fd>
-  <div style={{display:"flex",gap:"6px"}}><Btn onClick={()=>{if(nn.trim()){setList([...list,{id:gid(),name:nn.trim(),category:nc,photo:np,youtube:ny}]);setNn("");setNp("");setNy("");setSa(false);}}} style={{flex:1}}>추가</Btn><Btn variant="secondary" onClick={()=>setSa(false)}>취소</Btn></div>
-</div>:<Btn variant="secondary" style={{width:"100%",marginTop:"8px",borderStyle:"dashed"}} onClick={()=>setSa(true)}>+ 새 운동</Btn>}
-<Btn onClick={()=>onSave(list)} style={{width:"100%",marginTop:"12px"}}>저장</Btn>
-</div></div>{detail&&<ExDetailModal preset={detail} onClose={()=>setDetail(null)}/>}</>;}
+function PresetMgr({presets,onSave,onClose}){
+  const [list,setList]=useState(mergePresetsWithDB(presets||[]));
+  const [sa,setSa]=useState(false);
+  const [editId,setEditId]=useState(null);
+  const [nn,setNn]=useState("");
+  const [nc,setNc]=useState("하체");
+  const [np,setNp]=useState("");
+  const [ny,setNy]=useState("");
+  const fr=useRef(null);
+  const [detail,setDetail]=useState(null);
 
-// Custom routine
-function CustomRoutineForm({routine,onSave,onClose}){
-  const [title,setTitle]=useState(routine?.title||"");const [desc,setDesc]=useState(routine?.desc||"");const [days,setDays]=useState(routine?.days||[{title:"",exercises:[{name:"",sets:"3",reps:"12",note:""}]}]);
-  const addDay=()=>setDays([...days,{title:"",exercises:[{name:"",sets:"3",reps:"12",note:""}]}]);
-  const addEx=(di)=>{const c=[...days];c[di].exercises=[...c[di].exercises,{name:"",sets:"3",reps:"12",note:""}];setDays(c);};
-  return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"16px"}} onClick={onClose}><div style={{background:C.card,borderRadius:"20px",padding:"22px",width:"100%",maxWidth:"560px",maxHeight:"85vh",overflowY:"auto",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
-    <div style={{display:"flex",justifyContent:"space-between",marginBottom:"12px"}}><span style={{fontSize:"15px",fontWeight:800}}>{routine?"루틴 수정":"추천 루틴 만들기"}</span><Btn variant="ghost" onClick={onClose}>✕</Btn></div>
-    <Fd label="루틴 이름"><input value={title} onChange={e=>setTitle(e.target.value)} style={bi} placeholder="예: 초보자 전신 루틴"/></Fd>
-    <Fd label="설명"><input value={desc} onChange={e=>setDesc(e.target.value)} style={bi} placeholder="예: 주 3회 추천"/></Fd>
-    {days.map((day,di)=><div key={di} style={{background:C.bg,borderRadius:"10px",padding:"12px",marginBottom:"8px"}}>
-      <div style={{display:"flex",justifyContent:"space-between",marginBottom:"6px"}}><span style={{fontSize:"12px",fontWeight:700,color:C.accent}}>Day {di+1}</span>{days.length>1&&<Btn variant="danger" onClick={()=>setDays(days.filter((_,j)=>j!==di))} style={{padding:"2px 6px"}}>삭제</Btn>}</div>
-      <Fd label="이름"><input value={day.title} onChange={e=>{const c=[...days];c[di]={...c[di],title:e.target.value};setDays(c);}} style={bi} placeholder="예: 상체의 날"/></Fd>
-      {day.exercises.map((ex,ei)=><div key={ei} style={{display:"flex",gap:"4px",marginBottom:"4px",alignItems:"center"}}>
-        <input value={ex.name} onChange={e=>{const c=[...days];c[di].exercises=[...c[di].exercises];c[di].exercises[ei]={...ex,name:e.target.value};setDays(c);}} style={{...bi,padding:"8px",flex:3}} placeholder="운동 이름"/>
-        <input value={ex.sets} onChange={e=>{const c=[...days];c[di].exercises=[...c[di].exercises];c[di].exercises[ei]={...ex,sets:e.target.value};setDays(c);}} style={{...bi,padding:"8px",flex:1}} placeholder="세트"/>
-        <input value={ex.reps} onChange={e=>{const c=[...days];c[di].exercises=[...c[di].exercises];c[di].exercises[ei]={...ex,reps:e.target.value};setDays(c);}} style={{...bi,padding:"8px",flex:1}} placeholder="횟수"/>
-        {day.exercises.length>1&&<Btn variant="danger" onClick={()=>{const c=[...days];c[di].exercises=c[di].exercises.filter((_,k)=>k!==ei);setDays(c);}} style={{padding:"2px 5px"}}>−</Btn>}
-      </div>)}
-      <Btn variant="ghost" onClick={()=>addEx(di)} style={{fontSize:"10px"}}>+운동</Btn>
-    </div>)}
-    <Btn variant="secondary" style={{width:"100%",marginBottom:"10px",borderStyle:"dashed"}} onClick={addDay}>+ Day 추가</Btn>
-    <Btn onClick={()=>{if(title.trim())onSave({id:routine?.id||gid(),title:title.trim(),desc,days});}} style={{width:"100%"}}>저장</Btn>
-  </div></div>;
+  const resetForm = () => {
+    setEditId(null);
+    setNn("");
+    setNc("하체");
+    setNp("");
+    setNy("");
+    setSa(false);
+  };
+
+  const startEdit = (preset) => {
+    setEditId(preset.id);
+    setNn(preset.name || "");
+    setNc(preset.category || "하체");
+    setNp(preset.photo || "");
+    setNy(preset.youtube || "");
+    setSa(false);
+  };
+
+  const savePreset = () => {
+    if(!nn.trim()) return;
+    if(editId){
+      setList(list.map(x=>x.id===editId?{...x,name:nn.trim(),category:nc,photo:np,youtube:ny}:x));
+    } else {
+      setList([...list,{id:gid(),name:nn.trim(),category:nc,photo:np,youtube:ny}]);
+    }
+    resetForm();
+  };
+
+  const renderEditor = () => (
+    <div style={{background:C.cardAlt,borderRadius:"8px",padding:"12px",margin:"4px 0 8px 34px",border:`1px solid ${C.border}`}}>
+      <Fd label="운동 이름"><input value={nn} onChange={e=>setNn(e.target.value)} style={bi}/></Fd>
+      <Fd label="추천 운동 빠른 선택"><div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>{(EXERCISE_DB[nc]||[]).map(ex=><button key={ex} onClick={()=>setNn(ex)} style={{padding:"4px 10px",borderRadius:"14px",border:`1px solid ${C.border}`,fontSize:"10px",background:nn===ex?C.ag:C.card,color:nn===ex?C.accent:C.text,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif"}}>{ex}</button>)}</div></Fd>
+      <Fd label="카테고리"><div style={{display:"flex",gap:"3px",flexWrap:"wrap"}}>{["하체","가슴","등","어깨","팔","복근","기타"].map(c=><button key={c} onClick={()=>setNc(c)} style={{padding:"4px 10px",borderRadius:"14px",border:"none",fontSize:"10px",fontWeight:600,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif",background:nc===c?C.ag:C.card,color:nc===c?C.accent:C.td}}>{c}</button>)}</div></Fd>
+      <Fd label="기구 사진 (선택)"><div style={{display:"flex",gap:"6px",alignItems:"center",flexWrap:"wrap"}}>{np&&<img src={np} alt="" style={{width:36,height:36,borderRadius:"5px",objectFit:"cover"}}/>}<input type="file" accept="image/*" ref={fr} onChange={e=>{const f=e.target.files?.[0];if(f){const r=new FileReader();r.onload=ev=>setNp(ev.target.result);r.readAsDataURL(f);}}} style={{display:"none"}}/><Btn variant="secondary" onClick={()=>fr.current?.click()} style={{fontSize:"10px",padding:"5px 10px"}}>{np?"변경":"사진 추가"}</Btn>{np&&<Btn variant="ghost" onClick={()=>setNp("")} style={{fontSize:"10px",padding:"5px 8px"}}>제거</Btn>}</div></Fd>
+      <Fd label="유튜브 링크 (선택)"><input value={ny} onChange={e=>setNy(e.target.value)} style={bi} placeholder="https://youtube.com/..."/></Fd>
+      <div style={{display:"flex",gap:"6px"}}><Btn onClick={savePreset} style={{flex:1}}>{editId?"수정 저장":"추가"}</Btn><Btn variant="secondary" onClick={resetForm}>취소</Btn></div>
+    </div>
+  );
+
+  return <>
+    <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"16px"}} onClick={onClose}>
+      <div style={{background:C.card,borderRadius:"20px",padding:"22px",width:"100%",maxWidth:"560px",maxHeight:"85vh",overflowY:"auto",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
+        <div style={{display:"flex",justifyContent:"space-between",marginBottom:"10px"}}><span style={{fontSize:"15px",fontWeight:800}}>종목 관리</span><Btn variant="ghost" onClick={onClose}>✕</Btn></div>
+        <div style={{fontSize:"10px",color:C.td,marginBottom:"10px"}}>기구 사진과 유튜브 영상 링크를 등록하면 회원님들이 확인할 수 있어요</div>
+
+        {list.map(p=><div key={p.id}>
+          <div style={{display:"flex",alignItems:"center",gap:"6px",padding:"6px",background:C.bg,borderRadius:"6px",marginBottom:"3px"}}>
+            {p.photo?<img src={p.photo} alt="" style={{width:28,height:28,borderRadius:"4px",objectFit:"cover",cursor:"pointer"}} onClick={()=>setDetail(p)}/>:<div style={{width:28,height:28,borderRadius:"4px",background:C.ag,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px"}}>🏋️</div>}
+            <div style={{flex:1,cursor:"pointer"}} onClick={()=>setDetail(p)}><div style={{fontSize:"11px",fontWeight:600}}>{p.name}</div><div style={{fontSize:"8px",color:C.td}}>{p.category}{p.youtube?" · 📹":""}</div></div>
+            <Btn variant="ghost" onClick={()=>editId===p.id?resetForm():startEdit(p)} style={{padding:"3px 6px",fontSize:"10px",color:C.info}}>{editId===p.id?"닫기":"수정"}</Btn>
+            <Btn variant="danger" onClick={()=>{setList(list.filter(x=>x.id!==p.id)); if(editId===p.id) resetForm();}} style={{padding:"3px 6px"}}>삭제</Btn>
+          </div>
+          {editId===p.id && renderEditor()}
+        </div>)}
+
+        {sa ? renderEditor() : <Btn variant="secondary" style={{width:"100%",marginTop:"8px",borderStyle:"dashed"}} onClick={()=>{resetForm();setSa(true);}}>+ 새 운동</Btn>}
+
+        <Btn onClick={()=>onSave(mergePresetsWithDB(list))} style={{width:"100%",marginTop:"12px"}}>저장</Btn>
+      </div>
+    </div>
+    {detail && <ExDetailModal preset={detail} onClose={() => setDetail(null)} />}
+  </>;
 }
 
 function RtView({client,presets,isTrainer,onSaveCustom,onDeleteCustom}){
@@ -432,20 +484,62 @@ function RtView({client,presets,isTrainer,onSaveCustom,onDeleteCustom}){
 const trTabs=[["sessions","수업"],["routine","루틴"],["info","인바디"],["attend","출석"]];
 const clTabs=[["sessions","수업"],["routine","루틴"],["info","내 건강"],["attend","출석"]];
 
+function TrainerSecurityModal({trainer,onSave,onClose}){
+  const [loginId,setLoginId]=useState(trainer?.loginId||"hyungmin");
+  const [password,setPassword]=useState(trainer?.password||"");
+  const [confirmPassword,setConfirmPassword]=useState(trainer?.password||"");
+  const [err,setErr]=useState("");
+  const validate = () => {
+    if(!loginId.trim()) return "아이디를 입력해주세요.";
+    if(password.length < 10) return "비밀번호는 10자 이상으로 설정해주세요.";
+    if(!/[A-Za-z]/.test(password) || !/[0-9]/.test(password) || !/[^A-Za-z0-9]/.test(password)) return "영문, 숫자, 특수문자를 모두 포함해주세요.";
+    if(password !== confirmPassword) return "비밀번호 확인이 일치하지 않습니다.";
+    return "";
+  };
+  return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1200,padding:"20px"}} onClick={onClose}>
+    <div style={{background:C.card,borderRadius:"20px",padding:"24px",width:"100%",maxWidth:"420px",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}><span style={{fontSize:"16px",fontWeight:800}}>트레이너 보안 설정</span><Btn variant="ghost" onClick={onClose}>✕</Btn></div>
+      <div style={{fontSize:"11px",color:C.td,marginBottom:"12px",lineHeight:1.5}}>로컬 저장 방식이라 완전한 보안은 아닙니다. 그래도 PIN보다 훨씬 강한 로그인 방식으로 보호할 수 있어요.</div>
+      <Fd label="트레이너 아이디"><input value={loginId} onChange={e=>setLoginId(e.target.value)} style={bi} placeholder="예: hyungmin.vangofit" /></Fd>
+      <Fd label="새 비밀번호"><input type="password" value={password} onChange={e=>setPassword(e.target.value)} style={bi} placeholder="영문+숫자+특수문자 포함 10자 이상" /></Fd>
+      <Fd label="비밀번호 확인"><input type="password" value={confirmPassword} onChange={e=>setConfirmPassword(e.target.value)} style={bi} /></Fd>
+      {err&&<div style={{color:C.danger,fontSize:"11px",marginBottom:"10px"}}>{err}</div>}
+      <Btn onClick={()=>{const msg=validate(); if(msg){setErr(msg); return;} onSave({loginId:loginId.trim(),password,failedAttempts:0,lockUntil:0});}} style={{width:"100%"}}>저장</Btn>
+    </div>
+  </div>;
+}
+
 function Trainer({data,setData,onLogout}){
-  const [sel,setSel]=useState(null);const [tab,setTab]=useState("sessions");
-  const [showSF,setShowSF]=useState(false);const [editS,setEditS]=useState(null);
-  const [showGF,setShowGF]=useState(false);const [showAC,setShowAC]=useState(false);const [showPM,setShowPM]=useState(false);const [showIBF,setShowIBF]=useState(false);
-  const cl=sel?data.clients.find(c=>c.id===sel):null;
-  const sv=useCallback(d=>{const migrated=migrateData(d);setData(migrated);localStorage.setItem(SK,JSON.stringify(migrated));},[setData]);
+  const [sel,setSel]=useState(null);
+  const [tab,setTab]=useState("sessions");
+  const [showSF,setShowSF]=useState(false);
+  const [editS,setEditS]=useState(null);
+  const [showGF,setShowGF]=useState(false);
+  const [showAC,setShowAC]=useState(false);
+  const [showPM,setShowPM]=useState(false);
+  const [showIBF,setShowIBF]=useState(false);
+  const [showSec,setShowSec]=useState(false);
+
+  const clients = Array.isArray(data?.clients) ? data.clients : [];
+  const presets = Array.isArray(data?.presets) ? data.presets : [];
+  const customRoutines = Array.isArray(data?.customRoutines) ? data.customRoutines : [];
+
+  const cl = sel ? clients.find(c => c.id === sel) : null;
+
+  const sv = useCallback(d=>{
+    const migrated = migrateData(d);
+    setData(migrated);
+    localStorage.setItem(SK, JSON.stringify(migrated));
+  },[setData]);
 
   if(!cl) return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"10px",color:C.accent,letterSpacing:"2px",fontWeight:600}}>VANGOFIT</div><div style={{fontSize:"16px",fontWeight:800}}>회원 관리</div></div><div style={{display:"flex",gap:"6px"}}><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
-    <div style={{padding:"20px",maxWidth:"700px",margin:"0 auto"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:"12px"}}><div style={{display:"flex",gap:"6px",alignItems:"center"}}><span style={{fontSize:"16px",fontWeight:800}}>전체 회원</span><BG>{data.clients.length}명</BG></div><Btn onClick={()=>setShowAC(true)} style={{padding:"8px 14px",fontSize:"12px"}}>+ 새 회원</Btn></div>
-      {data.clients.map(c=>{const completed=getCompletedSessions(c);const remaining=getRemainingSessions(c);return <div key={c.id} style={{background:C.card,borderRadius:"12px",padding:"12px",border:`1px solid ${C.border}`,cursor:"pointer",marginBottom:"6px"}} onClick={()=>{setSel(c.id);setTab("sessions");}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:"13px",fontWeight:700}}>{c.name}</div><div style={{fontSize:"10px",color:C.td}}>{c.phone||"-"}</div></div><div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.accent}}>{completed}/{c.pt?.totalSessions||0}</div><div style={{fontSize:"8px",color:C.td}}>PT 진행</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.warn}}>{remaining}</div><div style={{fontSize:"8px",color:C.td}}>남은 횟수</div></div><Btn variant="danger" onClick={e=>{e.stopPropagation();if(confirm("삭제?"))sv({...data,clients:data.clients.filter(x=>x.id!==c.id)});}} style={{padding:"3px 6px"}}>✕</Btn></div></div></div>;})}
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"10px",color:C.accent,letterSpacing:"2px",fontWeight:600}}>VANGOFIT</div><div style={{fontSize:"16px",fontWeight:800}}>회원 관리</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px"}}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
+    <div style={{padding:"20px",maxWidth:"700px",margin:"0 auto"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:"12px"}}><div style={{display:"flex",gap:"6px",alignItems:"center"}}><span style={{fontSize:"16px",fontWeight:800}}>전체 회원</span><BG>{clients.length}명</BG></div><Btn onClick={()=>setShowAC(true)} style={{padding:"8px 14px",fontSize:"12px"}}>+ 새 회원</Btn></div>
+      {clients.map(c=>{const completed=getCompletedSessions(c);const remaining=getRemainingSessions(c);return <div key={c.id} style={{background:C.card,borderRadius:"12px",padding:"12px",border:`1px solid ${C.border}`,cursor:"pointer",marginBottom:"6px"}} onClick={()=>{setSel(c.id);setTab("sessions");}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:"13px",fontWeight:700}}>{c.name}</div><div style={{fontSize:"10px",color:C.td}}>{c.phone||"-"}</div></div><div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.accent}}>{completed}/{c.pt?.totalSessions||0}</div><div style={{fontSize:"8px",color:C.td}}>PT 진행</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.warn}}>{remaining}</div><div style={{fontSize:"8px",color:C.td}}>남은 횟수</div></div><Btn variant="danger" onClick={e=>{e.stopPropagation();if(confirm("삭제?"))sv({...data,clients:data.clients.filter(x=>x.id!==c.id)});}} style={{padding:"3px 6px"}}>✕</Btn></div></div></div>;})}
     </div>
-    {showAC&&<AddCl onSave={nc=>{sv({...data,clients:[...data.clients,nc]});setShowAC(false);}} onClose={()=>setShowAC(false)} pins={data.clients.map(c=>c.pin)}/>}
-    {showPM&&<PresetMgr presets={data.presets||[]} onSave={p=>{sv({...data,presets:p});setShowPM(false);}} onClose={()=>setShowPM(false)}/>}
+    {showAC&&<AddCl onSave={nc=>{sv({...data,clients:[...data.clients,nc]});setShowAC(false);}} onClose={()=>setShowAC(false)} pins={clients.map(c=>c.pin)}/>}
+    {showPM&&<PresetMgr presets={presets} onSave={p=>{sv({...data,presets:p});setShowPM(false);}} onClose={()=>setShowPM(false)}/>}
+    {showSec&&<TrainerSecurityModal trainer={data.trainer} onSave={(trainerPatch)=>{sv({...data,trainer:{...data.trainer,...trainerPatch}});setShowSec(false);}} onClose={()=>setShowSec(false)}/>}
   </div>;
 
   return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
@@ -458,57 +552,104 @@ function Trainer({data,setData,onLogout}){
           <div style={{display:"flex",gap:"6px"}}>
             <Btn variant="secondary" onClick={() => {
               const quickSession = {id: gid(),date: new Date().toISOString().split("T")[0],exercises: [],trainerMemo: "빠른 PT 출석 체크",clientMemo: "",quickCheck: true};
-              sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,sessions:[quickSession,...(c.sessions||[])]})});
+              sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,sessions:[quickSession,...(c.sessions||[])]})});
             }} style={{padding:"8px 12px",fontSize:"12px"}}>빠른 출석 체크</Btn>
             <Btn onClick={()=>{setEditS(null);setShowSF(true);}} style={{padding:"8px 12px",fontSize:"12px"}}>+ 새 기록</Btn>
           </div>
         </div>
-        {!cl.sessions.length?<div style={{textAlign:"center",padding:"50px",color:C.td}}>수업 기록이 없습니다</div>:[...cl.sessions].sort((a,b)=>b.date.localeCompare(a.date)).map(s=><div key={s.id}><SesDet session={s} presets={data.presets} onSaveClientMemo={(sid,m)=>sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,sessions:c.sessions.map(x=>x.id===sid?{...x,clientMemo:m}:x)})})} /><div style={{display:"flex",gap:"4px",marginTop:"-4px",marginBottom:"6px"}}><Btn variant="ghost" onClick={()=>{setEditS(s);setShowSF(true);}}>수정</Btn><Btn variant="danger" onClick={()=>{if(confirm("삭제?"))sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,sessions:c.sessions.filter(x=>x.id!==s.id)})});}}>삭제</Btn></div></div>)}
+        {!cl.sessions.length?<div style={{textAlign:"center",padding:"50px",color:C.td}}>수업 기록이 없습니다</div>:[...cl.sessions].sort((a,b)=>b.date.localeCompare(a.date)).map(s=><div key={s.id}><SesDet session={s} presets={presets} onSaveClientMemo={(sid,m)=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,sessions:c.sessions.map(x=>x.id===sid?{...x,clientMemo:m}:x)})})} /><div style={{display:"flex",gap:"4px",marginTop:"-4px",marginBottom:"6px"}}><Btn variant="ghost" onClick={()=>{setEditS(s);setShowSF(true);}}>수정</Btn><Btn variant="danger" onClick={()=>{if(confirm("삭제?"))sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,sessions:c.sessions.filter(x=>x.id!==s.id)})});}}>삭제</Btn></div></div>)}
       </>}
-      {tab==="routine"&&<RtView client={cl} presets={data.presets} isTrainer onSaveCustom={r=>sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,customRoutines:(c.customRoutines||[]).some(x=>x.id===r.id)?(c.customRoutines||[]).map(x=>x.id===r.id?r:x):[...(c.customRoutines||[]),r]})})} onDeleteCustom={id=>sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,customRoutines:(c.customRoutines||[]).filter(x=>x.id!==id)})})} />}
+      {tab==="routine"&&<RtView client={cl} presets={presets} isTrainer onSaveCustom={r=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,customRoutines:(c.customRoutines||[]).some(x=>x.id===r.id)?(c.customRoutines||[]).map(x=>x.id===r.id?r:x):[...(c.customRoutines||[]),r]})})} onDeleteCustom={id=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,customRoutines:(c.customRoutines||[]).filter(x=>x.id!==id)})})} />}
       {tab==="info"&&<InbodyView client={cl} isTrainer onEdit={()=>setShowGF(true)} onAddRecord={()=>setShowIBF(true)}/>}
-      {tab==="attend"&&<AttendanceView client={cl} isTrainer onSave={att=>sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,attendance:att})})} onSavePT={pt=>sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,pt})})}/>}
+      {tab==="attend"&&<AttendanceView client={cl} isTrainer onSave={att=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,attendance:att})})} onSavePT={pt=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,pt})})}/>}
     </div>
-    {showSF&&<SesForm presets={data.presets||[]} session={editS} onSave={s=>{sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,sessions:c.sessions.find(x=>x.id===s.id)?c.sessions.map(x=>x.id===s.id?s:x):[s,...c.sessions]})});setShowSF(false);setEditS(null);}} onClose={()=>{setShowSF(false);setEditS(null);}}/>}
-    {showGF&&<GoalsForm client={cl} onSave={(g,a,go,n)=>{sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,gender:g,age:a,goals:go,notes:n})});setShowGF(false);}} onClose={()=>setShowGF(false)}/>}
-    {showIBF&&<InbodyForm onSave={rec=>{sv({...data,clients:data.clients.map(c=>c.id!==sel?c:{...c,inbodyHistory:[...(c.inbodyHistory||[]).filter(x=>x.id!==rec.id),rec]})});setShowIBF(false);}} onClose={()=>setShowIBF(false)} title="인바디 기록"/>}
+    {showSF&&<SesForm presets={presets} session={editS} onSave={s=>{sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,sessions:c.sessions.find(x=>x.id===s.id)?c.sessions.map(x=>x.id===s.id?s:x):[s,...c.sessions]})});setShowSF(false);setEditS(null);}} onClose={()=>{setShowSF(false);setEditS(null);}}/>}
+    {showGF&&<GoalsForm client={cl} onSave={(g,a,go,n)=>{sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,gender:g,age:a,goals:go,notes:n})});setShowGF(false);}} onClose={()=>setShowGF(false)}/>}
+    {showIBF&&<InbodyForm onSave={rec=>{sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,inbodyHistory:[...(c.inbodyHistory||[]).filter(x=>x.id!==rec.id),rec]})});setShowIBF(false);}} onClose={()=>setShowIBF(false)} title="인바디 기록"/>}
   </div>;
 }
 
 function Client({data,setData,clientId,onLogout}){
-  const cl=data.clients.find(c=>c.id===clientId);const [tab,setTab]=useState("sessions");const [showIBF,setShowIBF]=useState(false);const [showGF,setShowGF]=useState(false);
+  const clients = Array.isArray(data?.clients) ? data.clients : [];
+  const presets = Array.isArray(data?.presets) ? data.presets : [];
+  const cl=clients.find(c=>c.id===clientId);const [tab,setTab]=useState("sessions");const [showIBF,setShowIBF]=useState(false);const [showGF,setShowGF]=useState(false);
   if(!cl) return <div style={{padding:"40px",textAlign:"center",color:C.td}}>회원 정보 없음</div>;
   const sv=d=>{const migrated=migrateData(d);setData(migrated);localStorage.setItem(SK,JSON.stringify(migrated));};
   return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card}}><div><div style={{fontSize:"9px",color:C.accent,letterSpacing:"2px",fontWeight:600}}>VANGOFIT</div><div style={{fontSize:"15px",fontWeight:800}}>{cl.name}님</div></div><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div>
     <div style={{display:"flex",gap:"2px",padding:"10px 20px",background:C.card,borderBottom:`1px solid ${C.border}`,overflowX:"auto"}}>{clTabs.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{padding:"7px 12px",borderRadius:"10px",border:"none",fontSize:"11px",fontWeight:tab===k?700:500,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif",whiteSpace:"nowrap",background:tab===k?C.ag:"transparent",color:tab===k?C.accent:C.td}}>{l}</button>)}</div>
     <div style={{padding:"20px",maxWidth:"500px",margin:"0 auto"}}>
-      {tab==="sessions"&&<><span style={{fontSize:"16px",fontWeight:800,display:"block",marginBottom:"10px"}}>수업 기록</span>{!cl.sessions.length?<div style={{textAlign:"center",padding:"50px",color:C.td}}>수업 기록이 없습니다</div>:[...cl.sessions].sort((a,b)=>b.date.localeCompare(a.date)).map(s=><SesDet key={s.id} session={s} presets={data.presets} isClient onSaveClientMemo={(sid,m)=>sv({...data,clients:data.clients.map(c=>c.id!==clientId?c:{...c,sessions:c.sessions.map(x=>x.id===sid?{...x,clientMemo:m}:x)})})}/>)}</>}
-      {tab==="routine"&&<RtView client={cl} presets={data.presets} />}
+      {tab==="sessions"&&<><span style={{fontSize:"16px",fontWeight:800,display:"block",marginBottom:"10px"}}>수업 기록</span>{!cl.sessions.length?<div style={{textAlign:"center",padding:"50px",color:C.td}}>수업 기록이 없습니다</div>:[...cl.sessions].sort((a,b)=>b.date.localeCompare(a.date)).map(s=><SesDet key={s.id} session={s} presets={presets} isClient onSaveClientMemo={(sid,m)=>sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,sessions:c.sessions.map(x=>x.id===sid?{...x,clientMemo:m}:x)})})}/>)}</>}
+      {tab==="routine"&&<RtView client={cl} presets={presets} />}
       {tab==="info"&&<InbodyView client={cl} onEdit={()=>setShowGF(true)} onAddRecord={()=>setShowIBF(true)}/>}
-      {tab==="attend"&&<AttendanceView client={cl} onSave={att=>sv({...data,clients:data.clients.map(c=>c.id!==clientId?c:{...c,attendance:att})})} onSavePT={()=>{}}/>}
+      {tab==="attend"&&<AttendanceView client={cl} onSave={att=>sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,attendance:att})})} onSavePT={()=>{}}/>}
     </div>
-    {showIBF&&<InbodyForm onSave={rec=>{sv({...data,clients:data.clients.map(c=>c.id!==clientId?c:{...c,inbodyHistory:[...(c.inbodyHistory||[]).filter(x=>x.id!==rec.id),rec]})});setShowIBF(false);}} onClose={()=>setShowIBF(false)} title="인바디 기록"/>}
-    {showGF&&<GoalsForm client={cl} isClient onSave={(g,a,go,n)=>{sv({...data,clients:data.clients.map(c=>c.id!==clientId?c:{...c,gender:g,age:a,goals:go,notes:n})});setShowGF(false);}} onClose={()=>setShowGF(false)}/>}
+    {showIBF&&<InbodyForm onSave={rec=>{sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,inbodyHistory:[...(c.inbodyHistory||[]).filter(x=>x.id!==rec.id),rec]})});setShowIBF(false);}} onClose={()=>setShowIBF(false)} title="인바디 기록"/>}
+    {showGF&&<GoalsForm client={cl} isClient onSave={(g,a,go,n)=>{sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,gender:g,age:a,goals:go,notes:n})});setShowGF(false);}} onClose={()=>setShowGF(false)}/>}
   </div>;
 }
 
-function Login({onLogin}){const [mode,setMode]=useState("select");const [pin,setPin]=useState("");const [err,setErr]=useState("");
-  const go=t=>{const s=localStorage.getItem(SK);const d=migrateData(s?JSON.parse(s):{trainer:{pin:"1234"},presets:defPresets,customRoutines:[],clients:importedClients});if(t==="trainer"){if(pin===d.trainer.pin)onLogin({type:"trainer"});else setErr("PIN 불일치");}else{const c=d.clients.find(c=>c.pin===pin);if(c)onLogin({type:"client",clientId:c.id});else setErr("PIN 확인");}};
+function Login({onLogin,data,setData}){
+  const [mode,setMode]=useState("select");
+  const [pin,setPin]=useState("");
+  const [trainerId,setTrainerId]=useState("");
+  const [trainerPassword,setTrainerPassword]=useState("");
+  const [err,setErr]=useState("");
+  const trainer=(data && data.trainer && data.trainer.loginId && data.trainer.password) ? data.trainer : defData.trainer;
+  const now=Date.now();
+  const locked=!!trainer.lockUntil && now<trainer.lockUntil;
+  const remainMin=locked?Math.ceil((trainer.lockUntil-now)/60000):0;
+
+  const failTrainerLogin=()=>{
+    const attempts=(trainer.failedAttempts||0)+1;
+    const shouldLock=attempts>=5;
+    setData(prev=>migrateData({...prev,trainer:{...prev.trainer,failedAttempts:shouldLock?0:attempts,lockUntil:shouldLock?Date.now()+10*60*1000:0}}));
+    setErr(shouldLock?"로그인 5회 실패로 10분간 잠겼습니다.":`아이디 또는 비밀번호가 올바르지 않습니다. (${attempts}/5)`);
+  };
+
+  const go=t=>{
+    if(t==="trainer") {
+      if(locked){setErr(`보안을 위해 ${remainMin}분 뒤 다시 시도해주세요.`); return;}
+      if(trainerId.trim()===String(trainer.loginId||"") && trainerPassword===String(trainer.password||"")){
+        setData(prev=>migrateData({...prev,trainer:{...prev.trainer,failedAttempts:0,lockUntil:0}}));
+        onLogin({type:"trainer"});
+      } else {
+        failTrainerLogin();
+      }
+    } else {
+      const clients = Array.isArray(data?.clients) ? data.clients : [];
+      const c=clients.find(c=>String(c.pin)===String(pin));
+      if(c) onLogin({type:"client",clientId:c.id});
+      else setErr("회원 PIN을 확인해주세요.");
+    }
+  };
+
   return <div style={{fontFamily:"'Noto Sans KR',sans-serif",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"100vh",padding:"20px",background:`linear-gradient(160deg,${C.bg},#12131A,${C.bg})`,color:C.text}}>
     <div style={{position:"absolute",top:0,left:0,right:0,bottom:0,background:"radial-gradient(ellipse at 25% 15%,rgba(212,168,67,0.05) 0%,transparent 55%)",pointerEvents:"none"}}/>
-    <div style={{background:C.card,borderRadius:"20px",padding:"40px 32px",width:"100%",maxWidth:"350px",border:`1px solid ${C.border}`,boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
+    <div style={{background:C.card,borderRadius:"20px",padding:"40px 32px",width:"100%",maxWidth:"360px",border:`1px solid ${C.border}`,boxShadow:"0 20px 60px rgba(0,0,0,0.5)"}}>
       <div style={{textAlign:"center",marginBottom:"24px"}}><div style={{fontSize:"28px",fontWeight:900,color:C.accent,letterSpacing:"-1px"}}>VangoFit</div><div style={{fontSize:"11px",color:C.td,marginTop:"4px",letterSpacing:"2px"}}>YOUR BODY, YOUR JOURNEY</div></div>
       <div style={{fontSize:"20px",fontWeight:800,textAlign:"center",marginBottom:"24px"}}>{mode==="select"?"로그인":mode==="trainer"?"트레이너":"회원"}</div>
-      {mode==="select"?<div style={{display:"flex",flexDirection:"column",gap:"10px"}}><Btn onClick={()=>setMode("trainer")} style={{width:"100%",padding:"13px"}}>트레이너</Btn><Btn variant="secondary" onClick={()=>setMode("client")} style={{width:"100%",padding:"13px"}}>회원</Btn></div>:<><input style={{...bi,padding:"13px 16px",marginBottom:"10px"}} type="password" placeholder={mode==="trainer"?"PIN (기본: 1234)":"회원 PIN"} value={pin} onChange={e=>{setPin(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go(mode)}/>{err&&<div style={{color:C.danger,fontSize:"11px",marginBottom:"6px"}}>{err}</div>}<Btn onClick={()=>go(mode)} style={{width:"100%",marginBottom:"8px"}}>로그인</Btn><Btn variant="ghost" onClick={()=>{setMode("select");setErr("");setPin("");}} style={{width:"100%"}}>← 돌아가기</Btn></>}
+      {mode==="select"?
+        <div style={{display:"flex",flexDirection:"column",gap:"10px"}}><Btn onClick={()=>{setMode("trainer");setErr("");}} style={{width:"100%",padding:"13px"}}>트레이너</Btn><Btn variant="secondary" onClick={()=>{setMode("client");setErr("");}} style={{width:"100%",padding:"13px"}}>회원</Btn></div>
+      : mode==="trainer" ? <>
+        <input style={{...bi,padding:"13px 16px",marginBottom:"10px"}} value={trainerId} placeholder="트레이너 아이디" onChange={e=>{setTrainerId(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go("trainer")} />
+        <input style={{...bi,padding:"13px 16px",marginBottom:"10px"}} type="password" value={trainerPassword} placeholder="트레이너 비밀번호" onChange={e=>{setTrainerPassword(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go("trainer")} />
+        {locked ? <div style={{color:C.warn,fontSize:"11px",marginBottom:"8px"}}>보안 잠금 상태입니다. {remainMin}분 뒤 다시 시도해주세요.</div> : null}
+        {err&&<div style={{color:C.danger,fontSize:"11px",marginBottom:"6px"}}>{err}</div>}
+        <Btn onClick={()=>go("trainer")} style={{width:"100%",marginBottom:"8px"}}>로그인</Btn><Btn variant="ghost" onClick={()=>{setMode("select");setErr("");setTrainerId("");setTrainerPassword("");}} style={{width:"100%"}}>← 돌아가기</Btn>
+      </> : <>
+        <input style={{...bi,padding:"13px 16px",marginBottom:"10px"}} type="password" placeholder="회원 PIN" value={pin} onChange={e=>{setPin(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go("client")} />
+        {err&&<div style={{color:C.danger,fontSize:"11px",marginBottom:"6px"}}>{err}</div>}
+        <Btn onClick={()=>go("client")} style={{width:"100%",marginBottom:"8px"}}>로그인</Btn><Btn variant="ghost" onClick={()=>{setMode("select");setErr("");setPin("");}} style={{width:"100%"}}>← 돌아가기</Btn>
+      </>}
     </div>
     <div style={{marginTop:"16px",fontSize:"10px",color:C.td}}>안동 · 형민 트레이너</div>
   </div>;
 }
 
 const defData = {
-  trainer: { pin: "1234" },
-  presets: defPresets,
+  trainer: { loginId: "hyungmin", password: "VangoFit!2026#", pin: "1234", failedAttempts: 0, lockUntil: 0 },
+  presets: mergePresetsWithDB([]),
   customRoutines: [],
   clients: importedClients
 };
@@ -517,7 +658,7 @@ export default function App(){
   const [user,setUser]=useState(null);
   const [data,setData]=useState(()=>{try{const s=localStorage.getItem(SK);return migrateData(s?JSON.parse(s):defData);}catch{return migrateData(defData);}});
   useEffect(()=>{try{localStorage.setItem(SK,JSON.stringify(migrateData(data)));}catch{}},[data]);
-  if(!user) return <Login onLogin={setUser}/>;
+  if(!user) return <Login onLogin={setUser} data={data} setData={setData}/>;
   if(user.type==="trainer") return <Trainer data={data} setData={setData} onLogout={()=>setUser(null)}/>;
   return <Client data={data} setData={setData} clientId={user.clientId} onLogout={()=>setUser(null)}/>;
 }
