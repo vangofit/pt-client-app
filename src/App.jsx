@@ -510,7 +510,7 @@ function TrainerSecurityModal({trainer,onSave,onClose}){
   </div>;
 }
 
-function Trainer({data,setData,onLogout}){
+function Trainer({data,setData,onLogout,syncStatus}){
   const [sel,setSel]=useState(null);const [tab,setTab]=useState("sessions");
   const [showSF,setShowSF]=useState(false);const [editS,setEditS]=useState(null);
   const [showGF,setShowGF]=useState(false);const [showAC,setShowAC]=useState(false);const [showPM,setShowPM]=useState(false);const [showIBF,setShowIBF]=useState(false);const [showSec,setShowSec]=useState(false);
@@ -520,7 +520,7 @@ function Trainer({data,setData,onLogout}){
   const sv=useCallback(d=>{const migrated=migrateData(d);setData(migrated);localStorage.setItem(SK,JSON.stringify(migrated));},[setData]);
 
   if(!cl) return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"10px",color:C.accent,letterSpacing:"2px",fontWeight:600}}>VANGOFIT</div><div style={{fontSize:"16px",fontWeight:800}}>회원 관리</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn variant="secondary" onClick={async()=>{try{await uploadLocalDataToSupabase(data);alert("Supabase 업로드 완료");}catch(e){console.error(e);alert("업로드 실패: "+(e.message||"알 수 없는 오류"));}}} style={{fontSize:"10px",padding:"6px 10px"}}>Supabase 업로드</Btn><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px"}}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"10px",color:C.accent,letterSpacing:"2px",fontWeight:600}}>VANGOFIT</div><div style={{fontSize:"16px",fontWeight:800}}>회원 관리</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={async()=>{try{await uploadLocalDataToSupabase(data);alert("Supabase 업로드 완료");}catch(e){console.error(e);alert("업로드 실패: "+(e.message||"알 수 없는 오류"));}}} style={{fontSize:"10px",padding:"6px 10px"}}>Supabase 업로드</Btn><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px"}}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
     <div style={{padding:"20px",maxWidth:"700px",margin:"0 auto"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:"12px"}}><div style={{display:"flex",gap:"6px",alignItems:"center"}}><span style={{fontSize:"16px",fontWeight:800}}>전체 회원</span><BG>{clients.length}명</BG></div><Btn onClick={()=>setShowAC(true)} style={{padding:"8px 14px",fontSize:"12px"}}>+ 새 회원</Btn></div>
       {clients.map(c=>{const completed=getCompletedSessions(c);const remaining=getRemainingSessions(c);return <div key={c.id} style={{background:C.card,borderRadius:"12px",padding:"12px",border:`1px solid ${C.border}`,cursor:"pointer",marginBottom:"6px"}} onClick={()=>{setSel(c.id);setTab("sessions");}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:"13px",fontWeight:700}}>{c.name}</div><div style={{fontSize:"10px",color:C.td}}>{c.phone||"-"}</div></div><div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.accent}}>{completed}/{c.pt?.totalSessions||0}</div><div style={{fontSize:"8px",color:C.td}}>PT 진행</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.warn}}>{remaining}</div><div style={{fontSize:"8px",color:C.td}}>남은 횟수</div></div><Btn variant="danger" onClick={e=>{e.stopPropagation();if(confirm("삭제?"))sv({...data,clients:data.clients.filter(x=>x.id!==c.id)});}} style={{padding:"3px 6px"}}>✕</Btn></div></div></div>;})}
     </div>
@@ -556,14 +556,14 @@ function Trainer({data,setData,onLogout}){
   </div>;
 }
 
-function Client({data,setData,clientId,onLogout}){
+function Client({data,setData,clientId,onLogout,syncStatus}){
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const presets = Array.isArray(data?.presets) ? data.presets : [];
   const cl=clients.find(c=>c.id===clientId);const [tab,setTab]=useState("sessions");const [showIBF,setShowIBF]=useState(false);const [showGF,setShowGF]=useState(false);
   if(!cl) return <div style={{padding:"40px",textAlign:"center",color:C.td}}>회원 정보 없음</div>;
   const sv=d=>{const migrated=migrateData(d);setData(migrated);localStorage.setItem(SK,JSON.stringify(migrated));};
   return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card}}><div><div style={{fontSize:"9px",color:C.accent,letterSpacing:"2px",fontWeight:600}}>VANGOFIT</div><div style={{fontSize:"15px",fontWeight:800}}>{cl.name}님</div></div><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,gap:"8px",flexWrap:"wrap"}}><div><div style={{fontSize:"9px",color:C.accent,letterSpacing:"2px",fontWeight:600}}>VANGOFIT</div><div style={{fontSize:"15px",fontWeight:800}}>{cl.name}님</div></div><div style={{display:"flex",gap:"6px",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
     <div style={{display:"flex",gap:"2px",padding:"10px 20px",background:C.card,borderBottom:`1px solid ${C.border}`,overflowX:"auto"}}>{clTabs.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{padding:"7px 12px",borderRadius:"10px",border:"none",fontSize:"11px",fontWeight:tab===k?700:500,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif",whiteSpace:"nowrap",background:tab===k?C.ag:"transparent",color:tab===k?C.accent:C.td}}>{l}</button>)}</div>
     <div style={{padding:"20px",maxWidth:"500px",margin:"0 auto"}}>
       {tab==="sessions"&&<><span style={{fontSize:"16px",fontWeight:800,display:"block",marginBottom:"10px"}}>수업 기록</span>{!cl.sessions.length?<div style={{textAlign:"center",padding:"50px",color:C.td}}>수업 기록이 없습니다</div>:[...cl.sessions].sort((a,b)=>b.date.localeCompare(a.date)).map(s=><SesDet key={s.id} session={s} presets={presets} isClient onSaveClientMemo={(sid,m)=>sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,sessions:c.sessions.map(x=>x.id===sid?{...x,clientMemo:m}:x)})})}/>)}</>}
@@ -689,28 +689,78 @@ async function loadAppDataFromSupabase(){
 
 async function uploadLocalDataToSupabase(appData){
   const safe=migrateData(appData);
-  const { error: trainerError } = await supabase.from("trainer_settings").upsert({id:1,username:safe.trainer.loginId,password:safe.trainer.password},{onConflict:"id"});
+  const { error: trainerError } = await supabase
+    .from("trainer_settings")
+    .upsert({id:1,username:safe.trainer.loginId,password:safe.trainer.password},{onConflict:"id"});
   if(trainerError) throw trainerError;
+
   const clientRows=safe.clients.map(c=>({
     id:c.id,name:c.name,pin:String(c.pin||""),phone:c.phone||"",gender:c.gender||"",age:c.age||null,
     goal_target_weight:c.goals?.targetWeight||null,goal_target_fat_pct:c.goals?.targetFatPct||null,goal_target_muscle:c.goals?.targetMuscle||null,
     injuries:c.notes?.injuries||"",surgery:c.notes?.surgery||"",conditions:c.notes?.conditions||"",experience:c.notes?.experience||"",
-    pt_start_date:c.pt?.startDate||null,pt_end_date:c.pt?.endDate||null,pt_total_sessions:Number(c.pt?.totalSessions||0),pt_base_completed_sessions:Number(c.pt?.baseCompletedSessions||0)
+    pt_start_date:c.pt?.startDate||null,pt_end_date:c.pt?.endDate||null,
+    pt_total_sessions:Number(c.pt?.totalSessions||0),
+    pt_base_completed_sessions:Number(c.pt?.baseCompletedSessions||0)
   }));
-  if(clientRows.length){ const {error}=await supabase.from("clients").upsert(clientRows,{onConflict:"id"}); if(error) throw error; }
-  const presetRows=(safe.presets||[]).map(p=>({id:p.id,name:p.name,category:p.category||"기타",photo:p.photo||"",youtube:p.youtube||""}));
-  if(presetRows.length){ const {error}=await supabase.from("presets").upsert(presetRows,{onConflict:"id"}); if(error) throw error; }
-  const routineRows=(safe.customRoutines||[]).map(r=>({id:r.id,title:r.title||"",description:r.desc||"",days:r.days||[]}));
-  if(routineRows.length){ const {error}=await supabase.from("custom_routines").upsert(routineRows,{onConflict:"id"}); if(error) throw error; }
+  if(clientRows.length){
+    const {error}=await supabase.from("clients").upsert(clientRows,{onConflict:"id"});
+    if(error) throw error;
+  }
+
+  const presetRows=(safe.presets||[]).map(p=>({
+    id:p.id,name:p.name,category:p.category||"기타",photo:p.photo||"",youtube:p.youtube||""
+  }));
+  if(presetRows.length){
+    const {error}=await supabase.from("presets").upsert(presetRows,{onConflict:"id"});
+    if(error) throw error;
+  }
+
+  const routineRows=(safe.customRoutines||[]).map(r=>({
+    id:r.id,title:r.title||"",description:r.desc||"",days:r.days||[]
+  }));
+  if(routineRows.length){
+    const {error}=await supabase.from("custom_routines").upsert(routineRows,{onConflict:"id"});
+    if(error) throw error;
+  }
+
+  const clientIds = safe.clients.map(c=>c.id).filter(Boolean);
   const sessionRows=[]; const attendanceRows=[]; const inbodyRows=[];
   safe.clients.forEach(c=>{
-    (c.sessions||[]).forEach(s=>sessionRows.push({id:s.id,client_id:c.id,session_date:s.date,trainer_memo:s.trainerMemo||"",client_memo:s.clientMemo||"",quick_check:!!s.quickCheck,exercises:s.exercises||[]}));
-    (c.attendance||[]).forEach(a=>attendanceRows.push({client_id:c.id,attendance_date:a.date,strength:a.strength||0,cardio:a.cardio||0}));
-    (c.inbodyHistory||[]).forEach(r=>inbodyRows.push({id:r.id,client_id:c.id,record_date:r.date,height:r.height||null,weight:r.weight||null,muscle:r.muscle||null,fat_pct:r.fatPct||null,fat_mass:r.fatMass||null,body_water:r.bodyWater||null,protein:r.protein||null,bmr:r.bmr||null,visceral_fat:r.visceralFat||null,waist:r.waist||null,score:r.score||null}));
+    (c.sessions||[]).forEach(s=>sessionRows.push({
+      id:s.id,client_id:c.id,session_date:s.date,trainer_memo:s.trainerMemo||"",
+      client_memo:s.clientMemo||"",quick_check:!!s.quickCheck,exercises:s.exercises||[]
+    }));
+    (c.attendance||[]).forEach(a=>attendanceRows.push({
+      client_id:c.id,attendance_date:a.date,strength:a.strength||0,cardio:a.cardio||0
+    }));
+    (c.inbodyHistory||[]).forEach(r=>inbodyRows.push({
+      id:r.id,client_id:c.id,record_date:r.date,height:r.height||null,weight:r.weight||null,
+      muscle:r.muscle||null,fat_pct:r.fatPct||null,fat_mass:r.fatMass||null,body_water:r.bodyWater||null,
+      protein:r.protein||null,bmr:r.bmr||null,visceral_fat:r.visceralFat||null,waist:r.waist||null,score:r.score||null
+    }));
   });
-  if(sessionRows.length){ const {error}=await supabase.from("sessions").upsert(sessionRows,{onConflict:"id"}); if(error) throw error; }
-  if(attendanceRows.length){ const {error}=await supabase.from("attendance").upsert(attendanceRows,{onConflict:"client_id,attendance_date"}); if(error) throw error; }
-  if(inbodyRows.length){ const {error}=await supabase.from("inbody_records").upsert(inbodyRows,{onConflict:"id"}); if(error) throw error; }
+
+  if(clientIds.length){
+    const del1=await supabase.from("sessions").delete().in("client_id", clientIds);
+    if(del1.error) throw del1.error;
+    const del2=await supabase.from("attendance").delete().in("client_id", clientIds);
+    if(del2.error) throw del2.error;
+    const del3=await supabase.from("inbody_records").delete().in("client_id", clientIds);
+    if(del3.error) throw del3.error;
+  }
+
+  if(sessionRows.length){
+    const {error}=await supabase.from("sessions").insert(sessionRows);
+    if(error) throw error;
+  }
+  if(attendanceRows.length){
+    const {error}=await supabase.from("attendance").insert(attendanceRows);
+    if(error) throw error;
+  }
+  if(inbodyRows.length){
+    const {error}=await supabase.from("inbody_records").insert(inbodyRows);
+    if(error) throw error;
+  }
 }
 
 const defData = {
@@ -724,10 +774,57 @@ export default function App(){
   const [user,setUser]=useState(null);
   const [data,setData]=useState(()=>{try{const s=localStorage.getItem(SK);return migrateData(s?JSON.parse(s):defData);}catch{return migrateData(defData);}});
   const [loading,setLoading]=useState(true);
-  useEffect(()=>{let mounted=true;(async()=>{try{const loaded=await loadAppDataFromSupabase(); if(mounted){ const finalData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData); setData(finalData); localStorage.setItem(SK,JSON.stringify(finalData)); }}catch{ try{const s=localStorage.getItem(SK); const fallback=migrateData(s?JSON.parse(s):defData); if(mounted) setData(fallback);}catch{ if(mounted) setData(migrateData(defData)); }}finally{ if(mounted) setLoading(false); }})(); return ()=>{mounted=false;};},[]);
-  useEffect(()=>{if(!loading){try{localStorage.setItem(SK,JSON.stringify(migrateData(data)));}catch{}}},[data,loading]);
+  const [syncStatus,setSyncStatus]=useState("idle");
+  const firstSyncSkipRef = useRef(true);
+  const syncTimerRef = useRef(null);
+
+  useEffect(()=>{let mounted=true;(async()=>{try{
+      const loaded=await loadAppDataFromSupabase();
+      if(mounted){
+        const finalData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData);
+        setData(finalData);
+        localStorage.setItem(SK,JSON.stringify(finalData));
+      }
+    }catch{
+      try{
+        const s=localStorage.getItem(SK);
+        const fallback=migrateData(s?JSON.parse(s):defData);
+        if(mounted) setData(fallback);
+      }catch{
+        if(mounted) setData(migrateData(defData));
+      }
+    }finally{
+      if(mounted) setLoading(false);
+    }})(); return ()=>{mounted=false;};},[]);
+
+  useEffect(()=>{
+    if(loading) return;
+    try{localStorage.setItem(SK,JSON.stringify(migrateData(data)));}catch{}
+  },[data,loading]);
+
+  useEffect(()=>{
+    if(loading) return;
+    if(firstSyncSkipRef.current){
+      firstSyncSkipRef.current = false;
+      return;
+    }
+    if(syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    setSyncStatus("pending");
+    syncTimerRef.current = setTimeout(async ()=>{
+      try{
+        setSyncStatus("syncing");
+        await uploadLocalDataToSupabase(data);
+        setSyncStatus("saved");
+      }catch(e){
+        console.error("자동 동기화 실패", e);
+        setSyncStatus("error");
+      }
+    }, 900);
+    return ()=>{ if(syncTimerRef.current) clearTimeout(syncTimerRef.current); };
+  },[data,loading]);
+
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.text,fontFamily:"'Noto Sans KR',sans-serif"}}>데이터 불러오는 중...</div>;
   if(!user) return <Login onLogin={setUser} data={data} setData={setData}/>;
-  if(user.type==="trainer") return <Trainer data={data} setData={setData} onLogout={()=>setUser(null)}/>;
-  return <Client data={data} setData={setData} clientId={user.clientId} onLogout={()=>setUser(null)}/>;
+  if(user.type==="trainer") return <Trainer data={data} setData={setData} onLogout={()=>setUser(null)} syncStatus={syncStatus}/>;
+  return <Client data={data} setData={setData} clientId={user.clientId} onLogout={()=>setUser(null)} syncStatus={syncStatus}/>;
 }
