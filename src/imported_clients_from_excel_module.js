@@ -21,7 +21,7 @@ export const importedClients = [
       "startDate": "2026-03-11",
       "endDate": "2026-09-06",
       "totalSessions": 33,
-      "legacyCompletedSessions": 1
+      "baseCompletedSessions": 1
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -50,7 +50,7 @@ export const importedClients = [
       "startDate": "2026-03-10",
       "endDate": "2026-09-05",
       "totalSessions": 33,
-      "legacyCompletedSessions": 0
+      "baseCompletedSessions": 0
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -79,7 +79,7 @@ export const importedClients = [
       "startDate": "2026-01-13",
       "endDate": "2026-05-12",
       "totalSessions": 22,
-      "legacyCompletedSessions": 18
+      "baseCompletedSessions": 18
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -89,7 +89,7 @@ export const importedClients = [
   {
     "id": "c4",
     "name": "권준찬",
-    "pin": "3314",
+    "pin": "6565",
     "phone": "010-6565-3314",
     "gender": "",
     "age": "",
@@ -108,7 +108,7 @@ export const importedClients = [
       "startDate": "2026-02-11",
       "endDate": "2026-08-09",
       "totalSessions": 33,
-      "legacyCompletedSessions": 7
+      "baseCompletedSessions": 7
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -137,7 +137,7 @@ export const importedClients = [
       "startDate": "2026-02-09",
       "endDate": "2026-04-09",
       "totalSessions": 11,
-      "legacyCompletedSessions": 4
+      "baseCompletedSessions": 4
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -166,7 +166,7 @@ export const importedClients = [
       "startDate": "2026-02-05",
       "endDate": "2026-08-03",
       "totalSessions": 33,
-      "legacyCompletedSessions": 9
+      "baseCompletedSessions": 9
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -195,7 +195,7 @@ export const importedClients = [
       "startDate": "2026-01-07",
       "endDate": "2026-07-05",
       "totalSessions": 33,
-      "legacyCompletedSessions": 14
+      "baseCompletedSessions": 14
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -224,7 +224,7 @@ export const importedClients = [
       "startDate": "2025-12-16",
       "endDate": "2026-06-18",
       "totalSessions": 33,
-      "legacyCompletedSessions": 23
+      "baseCompletedSessions": 23
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -253,7 +253,7 @@ export const importedClients = [
       "startDate": "2025-12-03",
       "endDate": "2026-03-31",
       "totalSessions": 22,
-      "legacyCompletedSessions": 16
+      "baseCompletedSessions": 16
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -282,7 +282,7 @@ export const importedClients = [
       "startDate": "2026-01-14",
       "endDate": "2026-05-13",
       "totalSessions": 22,
-      "legacyCompletedSessions": 13
+      "baseCompletedSessions": 13
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -311,7 +311,7 @@ export const importedClients = [
       "startDate": "2026-01-22",
       "endDate": "2026-03-24",
       "totalSessions": 11,
-      "legacyCompletedSessions": 10
+      "baseCompletedSessions": 10
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -340,7 +340,7 @@ export const importedClients = [
       "startDate": "2026-03-10",
       "endDate": "2026-09-05",
       "totalSessions": 33,
-      "legacyCompletedSessions": 1
+      "baseCompletedSessions": 1
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -369,7 +369,7 @@ export const importedClients = [
       "startDate": "2025-11-18",
       "endDate": "2026-03-31",
       "totalSessions": 22,
-      "legacyCompletedSessions": 20
+      "baseCompletedSessions": 20
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -398,7 +398,7 @@ export const importedClients = [
       "startDate": "2025-12-10",
       "endDate": "2026-06-14",
       "totalSessions": 33,
-      "legacyCompletedSessions": 26
+      "baseCompletedSessions": 26
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -427,7 +427,7 @@ export const importedClients = [
       "startDate": "2026-01-12",
       "endDate": "2026-07-10",
       "totalSessions": 33,
-      "legacyCompletedSessions": 11
+      "baseCompletedSessions": 11
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -456,7 +456,7 @@ export const importedClients = [
       "startDate": "2026-02-12",
       "endDate": "2026-04-26",
       "totalSessions": 11,
-      "legacyCompletedSessions": 3
+      "baseCompletedSessions": 3
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -485,7 +485,7 @@ export const importedClients = [
       "startDate": "2026-02-28",
       "endDate": "2026-09-28",
       "totalSessions": 33,
-      "legacyCompletedSessions": 9
+      "baseCompletedSessions": 9
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -514,7 +514,7 @@ export const importedClients = [
       "startDate": "2026-02-05",
       "endDate": "2026-08-03",
       "totalSessions": 33,
-      "legacyCompletedSessions": 7
+      "baseCompletedSessions": 7
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -543,7 +543,7 @@ export const importedClients = [
       "startDate": "2025-09-17",
       "endDate": "2026-03-31",
       "totalSessions": 33,
-      "legacyCompletedSessions": 28
+      "baseCompletedSessions": 28
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -572,7 +572,7 @@ export const importedClients = [
       "startDate": "2026-02-20",
       "endDate": "2026-04-20",
       "totalSessions": 11,
-      "legacyCompletedSessions": 1
+      "baseCompletedSessions": 1
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -601,7 +601,7 @@ export const importedClients = [
       "startDate": "2026-02-11",
       "endDate": "2026-04-11",
       "totalSessions": 11,
-      "legacyCompletedSessions": 4
+      "baseCompletedSessions": 4
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -630,7 +630,7 @@ export const importedClients = [
       "startDate": "2026-03-05",
       "endDate": "2026-07-02",
       "totalSessions": 22,
-      "legacyCompletedSessions": 2
+      "baseCompletedSessions": 2
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -659,7 +659,7 @@ export const importedClients = [
       "startDate": "2026-01-07",
       "endDate": "2026-07-05",
       "totalSessions": 33,
-      "legacyCompletedSessions": 16
+      "baseCompletedSessions": 16
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -688,7 +688,7 @@ export const importedClients = [
       "startDate": "2026-02-09",
       "endDate": "2026-04-09",
       "totalSessions": 11,
-      "legacyCompletedSessions": 4
+      "baseCompletedSessions": 4
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -717,7 +717,7 @@ export const importedClients = [
       "startDate": "2025-11-20",
       "endDate": "2026-03-26",
       "totalSessions": 22,
-      "legacyCompletedSessions": 18
+      "baseCompletedSessions": 18
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -746,7 +746,7 @@ export const importedClients = [
       "startDate": "2026-03-10",
       "endDate": "2026-09-05",
       "totalSessions": 33,
-      "legacyCompletedSessions": 1
+      "baseCompletedSessions": 1
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -775,7 +775,7 @@ export const importedClients = [
       "startDate": "2026-02-03",
       "endDate": "2026-08-10",
       "totalSessions": 33,
-      "legacyCompletedSessions": 8
+      "baseCompletedSessions": 8
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -804,7 +804,7 @@ export const importedClients = [
       "startDate": "2026-01-21",
       "endDate": "2026-05-20",
       "totalSessions": 22,
-      "legacyCompletedSessions": 9
+      "baseCompletedSessions": 9
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -833,7 +833,7 @@ export const importedClients = [
       "startDate": "2026-02-04",
       "endDate": "2026-06-03",
       "totalSessions": 22,
-      "legacyCompletedSessions": 8
+      "baseCompletedSessions": 8
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -862,7 +862,7 @@ export const importedClients = [
       "startDate": "2025-10-02",
       "endDate": "2026-03-30",
       "totalSessions": 33,
-      "legacyCompletedSessions": 29
+      "baseCompletedSessions": 29
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -891,7 +891,7 @@ export const importedClients = [
       "startDate": "2025-11-24",
       "endDate": "2026-07-31",
       "totalSessions": 44,
-      "legacyCompletedSessions": 18
+      "baseCompletedSessions": 18
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -920,7 +920,7 @@ export const importedClients = [
       "startDate": "2026-03-12",
       "endDate": "2026-09-07",
       "totalSessions": 33,
-      "legacyCompletedSessions": 0
+      "baseCompletedSessions": 0
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -949,7 +949,7 @@ export const importedClients = [
       "startDate": "2026-01-17",
       "endDate": "2026-03-17",
       "totalSessions": 11,
-      "legacyCompletedSessions": 4
+      "baseCompletedSessions": 4
     },
     "attendance": [],
     "inbodyHistory": [],
@@ -978,7 +978,7 @@ export const importedClients = [
       "startDate": "2026-03-04",
       "endDate": "2026-08-30",
       "totalSessions": 33,
-      "legacyCompletedSessions": 4
+      "baseCompletedSessions": 4
     },
     "attendance": [],
     "inbodyHistory": [],
