@@ -459,6 +459,64 @@ function PresetMgr({presets,onSave,onClose}){
   </>;
 }
 
+
+function CustomRoutineForm({routine,onSave,onClose}){
+  const [title,setTitle]=useState(routine?.title||"");
+  const [desc,setDesc]=useState(routine?.desc||"");
+  const [days,setDays]=useState(routine?.days?.length?routine.days:[{title:"Day 1",exercises:[{name:"",sets:"3",reps:"12",note:""}]}]);
+
+  const updateDay=(idx,patch)=>{
+    setDays(prev=>prev.map((d,i)=>i===idx?{...d,...patch}:d));
+  };
+  const updateExercise=(dayIdx,exIdx,patch)=>{
+    setDays(prev=>prev.map((d,i)=>{
+      if(i!==dayIdx) return d;
+      return {...d,exercises:d.exercises.map((ex,j)=>j===exIdx?{...ex,...patch}:ex)};
+    }));
+  };
+  const addDay=()=>setDays(prev=>[...prev,{title:`Day ${prev.length+1}`,exercises:[{name:"",sets:"3",reps:"12",note:""}]}]);
+  const removeDay=(idx)=>setDays(prev=>prev.filter((_,i)=>i!==idx));
+  const addExercise=(dayIdx)=>setDays(prev=>prev.map((d,i)=>i===dayIdx?{...d,exercises:[...d.exercises,{name:"",sets:"3",reps:"12",note:""}]}:d));
+  const removeExercise=(dayIdx,exIdx)=>setDays(prev=>prev.map((d,i)=>i===dayIdx?{...d,exercises:d.exercises.filter((_,j)=>j!==exIdx)}:d));
+
+  return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.78)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1200,padding:"16px"}} onClick={onClose}>
+    <div style={{background:C.card,borderRadius:"20px",padding:"22px",width:"100%",maxWidth:"620px",maxHeight:"88vh",overflowY:"auto",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
+        <span style={{fontSize:"16px",fontWeight:800}}>{routine?"루틴 수정":"루틴 만들기"}</span>
+        <Btn variant="ghost" onClick={onClose}>✕</Btn>
+      </div>
+      <Fd label="루틴 이름"><input value={title} onChange={e=>setTitle(e.target.value)} style={bi} placeholder="예: 하체 집중 루틴"/></Fd>
+      <Fd label="설명"><input value={desc} onChange={e=>setDesc(e.target.value)} style={bi} placeholder="예: 주 2회 추천"/></Fd>
+
+      {days.map((day,di)=><div key={di} style={{background:C.bg,borderRadius:"12px",padding:"12px",marginBottom:"10px",border:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+          <span style={{fontSize:"12px",fontWeight:700,color:C.accent}}>Day {di+1}</span>
+          {days.length>1&&<Btn variant="danger" onClick={()=>removeDay(di)} style={{padding:"6px 10px",fontSize:"11px"}}>삭제</Btn>}
+        </div>
+        <Fd label="Day 제목"><input value={day.title||""} onChange={e=>updateDay(di,{title:e.target.value})} style={bi} placeholder="예: 하체의 날"/></Fd>
+        {(day.exercises||[]).map((ex,ei)=><div key={ei} style={{background:C.cardAlt,borderRadius:"10px",padding:"10px",marginBottom:"8px"}}>
+          <Fd label="운동 이름"><input value={ex.name||""} onChange={e=>updateExercise(di,ei,{name:e.target.value})} style={bi} placeholder="운동 이름"/></Fd>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"8px"}}>
+            <Fd label="세트"><input value={ex.sets||""} onChange={e=>updateExercise(di,ei,{sets:e.target.value})} style={bi} placeholder="3"/></Fd>
+            <Fd label="횟수"><input value={ex.reps||""} onChange={e=>updateExercise(di,ei,{reps:e.target.value})} style={bi} placeholder="12"/></Fd>
+          </div>
+          <Fd label="메모"><input value={ex.note||""} onChange={e=>updateExercise(di,ei,{note:e.target.value})} style={bi} placeholder="예: 천천히 수행"/></Fd>
+          {(day.exercises||[]).length>1&&<Btn variant="danger" onClick={()=>removeExercise(di,ei)} style={{padding:"6px 10px",fontSize:"11px"}}>이 운동 삭제</Btn>}
+        </div>)}
+        <Btn variant="secondary" onClick={()=>addExercise(di)} style={{width:"100%",fontSize:"11px",marginTop:"4px"}}>+ 운동 추가</Btn>
+      </div>)}
+
+      <Btn variant="secondary" onClick={addDay} style={{width:"100%",marginBottom:"10px",borderStyle:"dashed"}}>+ Day 추가</Btn>
+      <Btn onClick={()=>{
+        if(!title.trim()){alert("루틴 이름을 입력해주세요.");return;}
+        const cleanedDays=(days||[]).map(d=>({...d,exercises:(d.exercises||[]).filter(ex=>String(ex.name||"").trim())})).filter(d=>(d.exercises||[]).length);
+        if(!cleanedDays.length){alert("운동을 1개 이상 입력해주세요.");return;}
+        onSave({id:routine?.id||gid(),title:title.trim(),desc:desc.trim(),days:cleanedDays});
+      }} style={{width:"100%"}}>저장</Btn>
+    </div>
+  </div>;
+}
+
 function RtView({client,presets,isTrainer,onSaveCustom,onDeleteCustom}){
   const auto=genRt(client,presets)||[];
   const custom=client.customRoutines||[];
@@ -670,6 +728,13 @@ async function loadAppDataFromSupabase(){
     if(!inbodyByClient[r.client_id]) inbodyByClient[r.client_id]=[];
     inbodyByClient[r.client_id].push({id:r.id,date:r.record_date,height:r.height,weight:r.weight,muscle:r.muscle,fatPct:r.fat_pct,fatMass:r.fat_mass,bodyWater:r.body_water,protein:r.protein,bmr:r.bmr,visceralFat:r.visceral_fat,waist:r.waist,score:r.score});
   });
+  const routinesByClient={};
+  (routinesRes.data||[]).forEach(r=>{
+    if(r.client_id){
+      if(!routinesByClient[r.client_id]) routinesByClient[r.client_id]=[];
+      routinesByClient[r.client_id].push({id:r.id,title:r.title,desc:r.description||"",days:r.days||[]});
+    }
+  });
 
   return migrateData({
     trainer: trainerRes.data ? {loginId: trainerRes.data.username, password: trainerRes.data.password} : undefined,
@@ -682,6 +747,7 @@ async function loadAppDataFromSupabase(){
       pt:{startDate:c.pt_start_date||"",endDate:c.pt_end_date||"",totalSessions:c.pt_total_sessions||0,baseCompletedSessions:c.pt_base_completed_sessions||0},
       attendance:attendanceByClient[c.id]||[],
       inbodyHistory:inbodyByClient[c.id]||[],
+      customRoutines:routinesByClient[c.id]||[],
       sessions:sessionsByClient[c.id]||[]
     }))
   });
@@ -689,10 +755,30 @@ async function loadAppDataFromSupabase(){
 
 async function uploadLocalDataToSupabase(appData){
   const safe=migrateData(appData);
+
+  const { data: existingClientsData, error: existingClientsError } = await supabase.from("clients").select("id");
+  if(existingClientsError) throw existingClientsError;
+  const remoteIds = new Set((existingClientsData||[]).map(x=>x.id));
+  const localIds = new Set((safe.clients||[]).map(c=>c.id).filter(Boolean));
+  const staleIds = [...remoteIds].filter(id=>!localIds.has(id));
+
   const { error: trainerError } = await supabase
     .from("trainer_settings")
     .upsert({id:1,username:safe.trainer.loginId,password:safe.trainer.password},{onConflict:"id"});
   if(trainerError) throw trainerError;
+
+  if(staleIds.length){
+    const delSessions=await supabase.from("sessions").delete().in("client_id", staleIds);
+    if(delSessions.error) throw delSessions.error;
+    const delAttendance=await supabase.from("attendance").delete().in("client_id", staleIds);
+    if(delAttendance.error) throw delAttendance.error;
+    const delInbody=await supabase.from("inbody_records").delete().in("client_id", staleIds);
+    if(delInbody.error) throw delInbody.error;
+    const delRoutines=await supabase.from("custom_routines").delete().in("client_id", staleIds);
+    if(delRoutines.error && !String(delRoutines.error.message||"").includes("client_id")) throw delRoutines.error;
+    const delClients=await supabase.from("clients").delete().in("id", staleIds);
+    if(delClients.error) throw delClients.error;
+  }
 
   const clientRows=safe.clients.map(c=>({
     id:c.id,name:c.name,pin:String(c.pin||""),phone:c.phone||"",gender:c.gender||"",age:c.age||null,
@@ -715,16 +801,8 @@ async function uploadLocalDataToSupabase(appData){
     if(error) throw error;
   }
 
-  const routineRows=(safe.customRoutines||[]).map(r=>({
-    id:r.id,title:r.title||"",description:r.desc||"",days:r.days||[]
-  }));
-  if(routineRows.length){
-    const {error}=await supabase.from("custom_routines").upsert(routineRows,{onConflict:"id"});
-    if(error) throw error;
-  }
-
   const clientIds = safe.clients.map(c=>c.id).filter(Boolean);
-  const sessionRows=[]; const attendanceRows=[]; const inbodyRows=[];
+  const sessionRows=[]; const attendanceRows=[]; const inbodyRows=[]; const routineRows=[];
   safe.clients.forEach(c=>{
     (c.sessions||[]).forEach(s=>sessionRows.push({
       id:s.id,client_id:c.id,session_date:s.date,trainer_memo:s.trainerMemo||"",
@@ -738,6 +816,9 @@ async function uploadLocalDataToSupabase(appData){
       muscle:r.muscle||null,fat_pct:r.fatPct||null,fat_mass:r.fatMass||null,body_water:r.bodyWater||null,
       protein:r.protein||null,bmr:r.bmr||null,visceral_fat:r.visceralFat||null,waist:r.waist||null,score:r.score||null
     }));
+    (c.customRoutines||[]).forEach(r=>routineRows.push({
+      id:r.id,client_id:c.id,title:r.title||"",description:r.desc||"",days:r.days||[]
+    }));
   });
 
   if(clientIds.length){
@@ -747,6 +828,8 @@ async function uploadLocalDataToSupabase(appData){
     if(del2.error) throw del2.error;
     const del3=await supabase.from("inbody_records").delete().in("client_id", clientIds);
     if(del3.error) throw del3.error;
+    const del4=await supabase.from("custom_routines").delete().in("client_id", clientIds);
+    if(del4.error && !String(del4.error.message||"").includes("client_id")) throw del4.error;
   }
 
   if(sessionRows.length){
@@ -760,6 +843,10 @@ async function uploadLocalDataToSupabase(appData){
   if(inbodyRows.length){
     const {error}=await supabase.from("inbody_records").insert(inbodyRows);
     if(error) throw error;
+  }
+  if(routineRows.length){
+    const {error}=await supabase.from("custom_routines").insert(routineRows);
+    if(error && !String(error.message||"").includes("client_id")) throw error;
   }
 }
 
