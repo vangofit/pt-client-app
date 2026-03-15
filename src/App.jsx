@@ -4,7 +4,69 @@ import { supabase } from "./supabase";
 import { importedClients } from "./imported_clients_from_excel_module";
 
 const SK = "pt-manager-data";
+const BK = "pt-manager-data-backup";
 const gid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+const nowIso = () => new Date().toISOString();
+
+const uuidHex = (input="") => {
+  let h1 = 0x811c9dc5, h2 = 0x811c9dc5;
+  const s = String(input);
+  for (let i = 0; i < s.length; i++) {
+    const ch = s.charCodeAt(i);
+    h1 ^= ch; h1 = Math.imul(h1, 0x01000193);
+    h2 ^= (ch + i); h2 = Math.imul(h2, 0x01000193);
+  }
+  const part = (n) => ((n >>> 0).toString(16).padStart(8, "0"));
+  return `${part(h1)}${part(h2)}${part(h1 ^ h2)}${part((h1 + h2) >>> 0)}`.slice(0, 32);
+};
+const isUuid = (v="") => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(v||""));
+const stringToUuid = (seed="") => {
+  const hex = uuidHex(seed || gid());
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-4${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`;
+};
+const ensureAttendanceUuid = (id, clientId="", date="") => isUuid(id) ? String(id) : stringToUuid(`attendance:${clientId}:${date}`);
+
+const metaNum = (v, d=0) => Number.isFinite(Number(v)) ? Number(v) : d;
+function stripMeta(value){
+  if(Array.isArray(value)) return value.map(stripMeta);
+  if(value && typeof value === 'object'){
+    const out={};
+    Object.entries(value).forEach(([k,v])=>{ if(!['updatedAt','version','deletedAt','createdAt'].includes(k)) out[k]=stripMeta(v); });
+    return out;
+  }
+  return value;
+}
+function sameContent(a,b){
+  try{return JSON.stringify(stripMeta(a))===JSON.stringify(stripMeta(b));}catch{return false;}
+}
+function compareEntityClock(a={}, b={}){
+  const va = metaNum(a?.version, 0);
+  const vb = metaNum(b?.version, 0);
+  if(va!==vb) return va-vb;
+  const ta = new Date(a?.updatedAt||0).getTime()||0;
+  const tb = new Date(b?.updatedAt||0).getTime()||0;
+  return ta-tb;
+}
+function touchEntity(prevEntity, nextEntity){
+  const next = {...(nextEntity||{})};
+  const prev = prevEntity || null;
+  if(!prev){
+    return {...next, updatedAt: next.updatedAt||nowIso(), version: Math.max(1, metaNum(next.version, 1))};
+  }
+  if(sameContent(prev, next)){
+    return {...prev, ...next, updatedAt: next.updatedAt||prev.updatedAt||nowIso(), version: Math.max(metaNum(prev.version,1), metaNum(next.version,1))};
+  }
+  return {...prev, ...next, updatedAt: nowIso(), version: Math.max(metaNum(prev.version,1), metaNum(next.version,1))+1};
+}
+function mergeFresh(localEntity, remoteEntity){
+  if(!localEntity) return remoteEntity;
+  if(!remoteEntity) return localEntity;
+  return compareEntityClock(localEntity, remoteEntity) >= 0 ? {...remoteEntity, ...localEntity} : {...localEntity, ...remoteEntity};
+}
+function touchList(prevList=[], nextList=[]){
+  const prevMap = new Map((prevList||[]).map(item=>[item?.id, item]).filter(([id])=>id));
+  return (nextList||[]).map(item=>touchEntity(prevMap.get(item?.id), item));
+}
 
 // ─── 운동 DB ───
 const EXERCISE_DB = {
@@ -251,16 +313,102 @@ function migrateData(raw){
       baseCompletedSessions:c?.pt?.baseCompletedSessions??c?.pt?.legacyCompletedSessions??c?.pt?.completedSessions??0,
       ...(c.pt||{})
     },
-    attendance:Array.isArray(c.attendance)?dedupeAttendance(c.attendance):[],
+    updatedAt:c.updatedAt||c.updated_at||nowIso(),
+    version:metaNum(c.version,1),
+    attendance:Array.isArray(c.attendance)?dedupeAttendance(c.attendance, c.id||`c${idx+1}`):[],
     inbodyHistory:normalizeInbody(Array.isArray(c.inbodyHistory)?c.inbodyHistory:[]),
     customRoutines:normalizeRoutines(Array.isArray(c.customRoutines)?c.customRoutines:[]),
     sessions:normalizeSessions(Array.isArray(c.sessions)?c.sessions:[]),
   })));
   return {trainer,presets,customRoutines,clients};
 }
-function dedupeAttendance(att){
+
+function safeJsonParse(text, fallback=null){
+  try{return text?JSON.parse(text):fallback;}catch{return fallback;}
+}
+function unionBy(items=[], keyGetter){
   const map=new Map();
-  (att||[]).forEach(a=>{if(a?.date) map.set(a.date,{date:a.date,strength:Number(a.strength)||0,cardio:Number(a.cardio)||0});});
+  (items||[]).forEach(item=>{
+    const key=keyGetter(item);
+    if(key!==undefined && key!==null && key!=="") map.set(String(key), item);
+  });
+  return Array.from(map.values());
+}
+function mergeClientData(localClient={}, remoteClient={}){
+  const local=migrateData({clients:[localClient]}).clients[0]||{};
+  const remote=migrateData({clients:[remoteClient]}).clients[0]||{};
+  const base = mergeFresh(local, remote) || {};
+  const mergeList=(localList=[], remoteList=[])=>{
+    const localMap=new Map((localList||[]).map(item=>[item?.id, item]).filter(([id])=>id));
+    const remoteMap=new Map((remoteList||[]).map(item=>[item?.id, item]).filter(([id])=>id));
+    const ids=Array.from(new Set([...remoteMap.keys(), ...localMap.keys()]));
+    return ids.map(id=>mergeFresh(localMap.get(id), remoteMap.get(id))).filter(Boolean);
+  };
+  return {
+    ...base,
+    id: local.id || remote.id,
+    name: String((compareEntityClock(local, remote)>=0?local.name:remote.name) || local.name || remote.name || "").trim(),
+    pin: String((compareEntityClock(local, remote)>=0?local.pin:remote.pin) || local.pin || remote.pin || "").trim(),
+    phone: String((compareEntityClock(local, remote)>=0?local.phone:remote.phone) || local.phone || remote.phone || "").trim(),
+    gender: compareEntityClock(local, remote)>=0 ? (local.gender||remote.gender||"") : (remote.gender||local.gender||""),
+    age: compareEntityClock(local, remote)>=0 ? (local.age||remote.age||"") : (remote.age||local.age||""),
+    goals: compareEntityClock(local, remote)>=0 ? {...(remote.goals||{}), ...(local.goals||{})} : {...(local.goals||{}), ...(remote.goals||{})},
+    notes: compareEntityClock(local, remote)>=0 ? {...(remote.notes||{}), ...(local.notes||{})} : {...(local.notes||{}), ...(remote.notes||{})},
+    pt: {
+      startDate: compareEntityClock(local, remote)>=0 ? (local.pt?.startDate || remote.pt?.startDate || "") : (remote.pt?.startDate || local.pt?.startDate || ""),
+      endDate: compareEntityClock(local, remote)>=0 ? (local.pt?.endDate || remote.pt?.endDate || "") : (remote.pt?.endDate || local.pt?.endDate || ""),
+      totalSessions: Math.max(Number(local.pt?.totalSessions||0), Number(remote.pt?.totalSessions||0)),
+      baseCompletedSessions: Math.max(Number(local.pt?.baseCompletedSessions||0), Number(remote.pt?.baseCompletedSessions||0)),
+    },
+    attendance: dedupeAttendance(mergeList(remote.attendance||[], local.attendance||[]), local.id || remote.id),
+    inbodyHistory: normalizeInbody(mergeList(remote.inbodyHistory||[], local.inbodyHistory||[])),
+    customRoutines: normalizeRoutines(mergeList(remote.customRoutines||[], local.customRoutines||[])),
+    sessions: normalizeSessions(mergeList(remote.sessions||[], local.sessions||[])),
+  };
+}
+function mergeAppData(localRaw, remoteRaw){
+  const local=migrateData(localRaw);
+  const remote=migrateData(remoteRaw);
+  const localById=new Map((local.clients||[]).map(c=>[c.id,c]));
+  const remoteById=new Map((remote.clients||[]).map(c=>[c.id,c]));
+  const allIds=Array.from(new Set([...localById.keys(), ...remoteById.keys()]));
+  const clients=allIds.map(id=>mergeClientData(localById.get(id)||{}, remoteById.get(id)||{}));
+  const mergeTop=(localList=[], remoteList=[])=>{
+    const localMap=new Map((localList||[]).map(item=>[item?.id||`${item?.category}-${item?.name}`, item]));
+    const remoteMap=new Map((remoteList||[]).map(item=>[item?.id||`${item?.category}-${item?.name}`, item]));
+    const ids=Array.from(new Set([...remoteMap.keys(), ...localMap.keys()]));
+    return ids.map(id=>mergeFresh(localMap.get(id), remoteMap.get(id))).filter(Boolean);
+  };
+  return migrateData({
+    trainer: mergeFresh(local.trainer||{}, remote.trainer||{}) || { ...(remote.trainer||{}), ...(local.trainer||{}) },
+    presets: mergeTop(local.presets||[], remote.presets||[]),
+    customRoutines: normalizeRoutines(mergeTop(local.customRoutines||[], remote.customRoutines||[])),
+    clients,
+  });
+}
+function saveLocalSnapshot(appData){
+  const safe=migrateData(appData);
+  try{
+    const existing=localStorage.getItem(SK);
+    if(existing) localStorage.setItem(BK, existing);
+    localStorage.setItem(SK, JSON.stringify(safe));
+  }catch{}
+  return safe;
+}
+function loadBestLocalSnapshot(fallback){
+  const primary=safeJsonParse(typeof localStorage!=="undefined"?localStorage.getItem(SK):null, null);
+  if(primary) return migrateData(primary);
+  const backup=safeJsonParse(typeof localStorage!=="undefined"?localStorage.getItem(BK):null, null);
+  if(backup) return migrateData(backup);
+  return migrateData(fallback);
+}
+function dedupeAttendance(att, clientId='client'){
+  const map=new Map();
+  (att||[]).forEach((a,idx)=>{
+    if(!a?.date) return;
+    const id = ensureAttendanceUuid(a.id, clientId, a.date);
+    map.set(a.date,{id,date:a.date,strength:Number(a.strength)||0,cardio:Number(a.cardio)||0,updatedAt:a.updatedAt||a.updated_at||nowIso(),version:metaNum(a.version,1),deletedAt:a.deletedAt||a.deleted_at||null});
+  });
   return Array.from(map.values()).sort((a,b)=>a.date.localeCompare(b.date));
 }
 function normalizeSets(sets=[]){
@@ -287,7 +435,10 @@ function normalizeSessions(sessions=[]){
       exercises,
       trainerMemo:s?.trainerMemo||"",
       clientMemo:s?.clientMemo||"",
-      quickCheck:!!s?.quickCheck
+      quickCheck:!!s?.quickCheck,
+      updatedAt:s?.updatedAt||s?.updated_at||nowIso(),
+      version:metaNum(s?.version,1),
+      deletedAt:s?.deletedAt||s?.deleted_at||null
     });
   });
   return Array.from(map.values()).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
@@ -296,7 +447,7 @@ function normalizeInbody(records=[]){
   const map = new Map();
   (records||[]).forEach((r,idx)=>{
     const id = r?.id || `inbody-${idx}-${r?.date||gid()}`;
-    map.set(id,{id,date:r?.date||"",height:r?.height||"",weight:r?.weight||"",muscle:r?.muscle||"",fatPct:r?.fatPct||"",fatMass:r?.fatMass||"",bodyWater:r?.bodyWater||"",protein:r?.protein||"",bmr:r?.bmr||"",visceralFat:r?.visceralFat||"",waist:r?.waist||"",score:r?.score||""});
+    map.set(id,{id,date:r?.date||"",height:r?.height||"",weight:r?.weight||"",muscle:r?.muscle||"",fatPct:r?.fatPct||"",fatMass:r?.fatMass||"",bodyWater:r?.bodyWater||"",protein:r?.protein||"",bmr:r?.bmr||"",visceralFat:r?.visceralFat||"",waist:r?.waist||"",score:r?.score||"",updatedAt:r?.updatedAt||r?.updated_at||nowIso(),version:metaNum(r?.version,1),deletedAt:r?.deletedAt||r?.deleted_at||null});
   });
   return Array.from(map.values()).sort((a,b)=>String(a.date).localeCompare(String(b.date)));
 }
@@ -316,7 +467,7 @@ function normalizeRoutines(routines=[]){
   const map = new Map();
   (routines||[]).forEach((r,idx)=>{
     const id = r?.id || `routine-${idx}-${gid()}`;
-    map.set(id,{id,title:String(r?.title||"").trim(),desc:r?.desc||r?.description||"",days:normalizeRoutineDays(r?.days||[])});
+    map.set(id,{id,title:String(r?.title||"").trim(),desc:r?.desc||r?.description||"",days:normalizeRoutineDays(r?.days||[]),updatedAt:r?.updatedAt||r?.updated_at||nowIso(),version:metaNum(r?.version,1),deletedAt:r?.deletedAt||r?.deleted_at||null});
   });
   return Array.from(map.values()).filter(r=>r.title && r.days.length);
 }
@@ -417,6 +568,30 @@ function getElapsedOpenDaysInCurrentMonth(){
   for(let d=1; d<=today.getDate(); d++){ if(new Date(year,month,d).getDay()!==0) count++; }
   return count;
 }
+
+function touchAppData(prevRaw, nextRaw){
+  const prev = migrateData(prevRaw);
+  const next = migrateData(nextRaw);
+  const touchClient=(prevClient, nextClient)=>{
+    const base=touchEntity(prevClient, nextClient);
+    return {
+      ...base,
+      attendance: dedupeAttendance(touchList(prevClient?.attendance||[], nextClient?.attendance||[]), nextClient?.id||prevClient?.id),
+      inbodyHistory: normalizeInbody(touchList(prevClient?.inbodyHistory||[], nextClient?.inbodyHistory||[])),
+      customRoutines: normalizeRoutines(touchList(prevClient?.customRoutines||[], nextClient?.customRoutines||[])),
+      sessions: normalizeSessions(touchList(prevClient?.sessions||[], nextClient?.sessions||[])),
+    };
+  };
+  const prevClientMap=new Map((prev.clients||[]).map(c=>[c.id,c]));
+  const clients=(next.clients||[]).map(c=>touchClient(prevClientMap.get(c.id), c));
+  return migrateData({
+    trainer: touchEntity(prev.trainer, next.trainer),
+    presets: touchList(prev.presets||[], next.presets||[]),
+    customRoutines: normalizeRoutines(touchList(prev.customRoutines||[], next.customRoutines||[])),
+    clients,
+  });
+}
+
 function getMonthAttendance(client,prefix){
   return dedupeAttendance(client?.attendance||[]).filter(a=>a?.date?.startsWith(prefix));
 }
@@ -611,7 +786,7 @@ function AttendanceView({client,isTrainer,onSave,onSavePT}){
       {nextBadge&&<div style={{marginTop:"6px",padding:"8px 12px",background:C.bg,borderRadius:"8px",border:`1px dashed ${C.border}`}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><span style={{fontSize:"12px"}}>{nextBadge.emoji} {nextBadge.title}</span><BG color={C.warn}>{nextBadge.days-totalDays}일 남음</BG></div><div style={{background:C.card,borderRadius:"3px",height:"5px",marginTop:"5px",overflow:"hidden"}}><div style={{height:"100%",background:C.accent,borderRadius:"3px",width:`${Math.round((totalDays/nextBadge.days)*100)}%`}}/></div></div>}
     </div>
 
-    {showLog&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"20px"}} onClick={()=>setShowLog(false)}><div style={{background:C.card,borderRadius:"20px",padding:"24px",width:"100%",maxWidth:"360px",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}><div style={{fontSize:"16px",fontWeight:800,marginBottom:"14px"}}>{logDate} 운동 기록</div><Fd label="근력 운동 (분)"><input type="number" value={logStr} onChange={e=>setLogStr(e.target.value)} style={bi} placeholder="예: 60"/></Fd><Fd label="유산소 운동 (분)"><input type="number" value={logCard} onChange={e=>setLogCard(e.target.value)} style={bi} placeholder="예: 30"/></Fd><div style={{display:"flex",gap:"8px"}}><Btn onClick={()=>{const strength=Number(logStr)||0;const cardio=Number(logCard)||0;if(strength<=0&&cardio<=0){alert("근력운동 시간 또는 유산소 시간을 입력해야 출석이 표시됩니다.");return;}const ex=att.find(a=>a.date===logDate);onSave(ex?att.map(a=>a.date===logDate?{...a,strength,cardio}:a):[...att,{date:logDate,strength,cardio}]);setShowLog(false);}} style={{flex:1}}>저장</Btn>{att.some(a=>a.date===logDate)&&<Btn variant="danger" onClick={()=>{onSave(att.filter(a=>a.date!==logDate));setShowLog(false);}}>삭제</Btn>}</div></div></div>}
+    {showLog&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"20px"}} onClick={()=>setShowLog(false)}><div style={{background:C.card,borderRadius:"20px",padding:"24px",width:"100%",maxWidth:"360px",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}><div style={{fontSize:"16px",fontWeight:800,marginBottom:"14px"}}>{logDate} 운동 기록</div><Fd label="근력 운동 (분)"><input type="number" value={logStr} onChange={e=>setLogStr(e.target.value)} style={bi} placeholder="예: 60"/></Fd><Fd label="유산소 운동 (분)"><input type="number" value={logCard} onChange={e=>setLogCard(e.target.value)} style={bi} placeholder="예: 30"/></Fd><div style={{display:"flex",gap:"8px"}}><Btn onClick={()=>{const strength=Number(logStr)||0;const cardio=Number(logCard)||0;if(strength<=0&&cardio<=0){alert("근력운동 시간 또는 유산소 시간을 입력해야 출석이 표시됩니다.");return;}const ex=att.find(a=>a.date===logDate);onSave(ex?att.map(a=>a.date===logDate?touchEntity(a,{...a,strength,cardio}):a):[...att,touchEntity(null,{id:`attendance-${client.id}-${logDate}`,date:logDate,strength,cardio})]);setShowLog(false);}} style={{flex:1}}>저장</Btn>{att.some(a=>a.date===logDate)&&<Btn variant="danger" onClick={()=>{onSave(att.filter(a=>a.date!==logDate));setShowLog(false);}}>삭제</Btn>}</div></div></div>}
 
     {showBadgeList&&<div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:"20px"}} onClick={()=>setShowBadgeList(false)}><div style={{background:C.card,borderRadius:"20px",padding:"24px",width:"100%",maxWidth:"420px",maxHeight:"80vh",overflowY:"auto",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}><div style={{fontSize:"16px",fontWeight:800}}>전체 배지 보기</div><Btn variant="ghost" onClick={()=>setShowBadgeList(false)}>✕</Btn></div>{BADGES.map(b=>{const earned=totalDays>=b.days;return <div key={b.days} style={{display:"flex",gap:"10px",alignItems:"flex-start",padding:"10px",background:earned?C.ag:C.bg,borderRadius:"10px",marginBottom:"6px",border:`1px solid ${earned?C.accent:C.border}`}}><div style={{fontSize:"24px",opacity:earned?1:0.5}}>{b.emoji}</div><div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:700}}>{b.title} <span style={{fontSize:"9px",color:C.td}}>({b.days}일)</span></div><div style={{fontSize:"10px",color:C.tm,marginTop:"2px",lineHeight:1.4}}>{b.msg}</div></div><BG color={earned?C.success:C.warn}>{earned?"달성":"남은 "+(b.days-totalDays)+"일"}</BG></div>;})}</div></div>}
 
@@ -973,7 +1148,7 @@ function RtView({client,presets,isTrainer,onSaveCustom,onDeleteCustom,sharedRout
   const personal=(client.customRoutines||[]).map(r=>({...r,type:`custom-${r.id}`}));
   const firstType=recommended.length?"recommended":(auto[0]?.type || personal[0]?.type || "");
   const [at,setAt]=useState(firstType);
-  const [showCR,setShowCR]=useState(false);const [editCR,setEditCR]=useState(null);
+  const [showCR,setShowCR]=useState(false);const [editCR,setEditCR]=useState(null);const [showRM,setShowRM]=useState(false);
   const allTabs=[...(recommended.length?[{type:"recommended",title:"반고핏 추천 루틴",isRecommendedHome:true}]:[]),...auto,...personal];
   const active=allTabs.find(r=>r.type===(at||allTabs[0]?.type))||allTabs[0];
   useEffect(()=>{
@@ -981,7 +1156,7 @@ function RtView({client,presets,isTrainer,onSaveCustom,onDeleteCustom,sharedRout
   },[at,recommended.length,auto.length,personal.length]);
   if(!allTabs.length&&!isTrainer) return <div style={{textAlign:"center",padding:"50px",color:C.td}}><div style={{fontSize:"40px",marginBottom:"10px"}}>📝</div>수업 기록이 쌓이면 루틴이 생성됩니다</div>;
   return <>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}><span style={{fontSize:"17px",fontWeight:800}}>복습 루틴</span>{isTrainer&&<Btn onClick={()=>{setEditCR(null);setShowCR(true);}} style={{padding:"7px 12px",fontSize:"11px"}}>+루틴 만들기</Btn>}</div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}><span style={{fontSize:"17px",fontWeight:800}}>복습 루틴</span>{isTrainer&&<div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}><Btn variant="secondary" onClick={()=>setShowRM(true)} style={{padding:"7px 12px",fontSize:"11px"}}>루틴 관리</Btn><Btn onClick={()=>{setEditCR(null);setShowCR(true);}} style={{padding:"7px 12px",fontSize:"11px"}}>+루틴 만들기</Btn></div>}</div>
     <div style={{fontSize:"10px",color:C.td,marginBottom:"10px"}}>자동 생성 루틴은 수업 시 80% 무게 추천</div>
     {allTabs.length>0&&<>
       <div style={{display:"flex",gap:"3px",marginBottom:"10px",flexWrap:"wrap"}}>{allTabs.map(r=><button key={r.type} onClick={()=>setAt(r.type)} style={{padding:"6px 12px",borderRadius:"16px",border:"none",fontSize:"10px",fontWeight:600,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif",background:(at||allTabs[0]?.type)===r.type?C.ag:C.bg,color:(at||allTabs[0]?.type)===r.type?C.accent:C.td}}>{r.title}</button>)}</div>
@@ -1004,10 +1179,38 @@ function RtView({client,presets,isTrainer,onSaveCustom,onDeleteCustom,sharedRout
         {isTrainer&&active.type?.startsWith("custom-")&&<div style={{display:"flex",gap:"6px",marginTop:"4px"}}><Btn variant="ghost" onClick={()=>{const cr=personal.find(r=>`custom-${r.id}`===active.type);setEditCR(cr);setShowCR(true);}}>수정</Btn><Btn variant="danger" onClick={()=>{const crId=active.type.replace("custom-","");onDeleteCustom(crId);setAt(recommended.length?"recommended":(auto[0]?.type||""));}}>삭제</Btn></div>}
       </>}
     </>}
-    {showCR&&<CustomRoutineForm routine={editCR} onSave={r=>{onSaveCustom(r);setShowCR(false);setAt(recommended.length||!editCR?"recommended":`custom-${r.id}`);}} onClose={()=>setShowCR(false)}/>}
+    {showCR&&<CustomRoutineForm routine={editCR} presets={presets} onSave={r=>{onSaveCustom(r);setShowCR(false);setEditCR(null);setAt("recommended");}} onClose={()=>{setShowCR(false);setEditCR(null);}}/>}{showRM&&<RoutineManagerModal routines={recommended} onCreate={()=>{setShowRM(false);setEditCR(null);setShowCR(true);}} onEdit={(rt)=>{setShowRM(false);setEditCR(rt);setShowCR(true);}} onDelete={(id)=>{if(confirm("이 루틴을 삭제할까요?")){onDeleteCustom(id);}}} onClose={()=>setShowRM(false)}/>}
   </>;
 }
 
+
+function RoutineManagerModal({routines=[],onCreate,onEdit,onDelete,onClose}){
+  return <div style={{position:"fixed",top:0,left:0,right:0,bottom:0,background:"rgba(0,0,0,0.78)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1300,padding:"16px"}} onClick={onClose}>
+    <div style={{background:C.card,borderRadius:"20px",padding:"22px",width:"100%",maxWidth:"620px",maxHeight:"86vh",overflowY:"auto",border:`1px solid ${C.border}`}} onClick={e=>e.stopPropagation()}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}>
+        <div>
+          <div style={{fontSize:"16px",fontWeight:800}}>루틴 관리</div>
+          <div style={{fontSize:"11px",color:C.td,marginTop:"4px"}}>저장된 추천 루틴을 수정·삭제할 수 있습니다.</div>
+        </div>
+        <Btn variant="ghost" onClick={onClose}>✕</Btn>
+      </div>
+      <Btn onClick={onCreate} style={{width:"100%",marginBottom:"12px"}}>+ 새 루틴 만들기</Btn>
+      {!routines.length ? <div style={{padding:"28px",textAlign:"center",color:C.td,background:C.bg,borderRadius:"12px"}}>저장된 루틴이 없습니다.</div> : routines.map((rt,idx)=><div key={rt.id||idx} style={{background:C.bg,borderRadius:"14px",padding:"14px",marginBottom:"10px",border:`1px solid ${C.border}`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",flexWrap:"wrap"}}>
+          <div>
+            <div style={{fontSize:"14px",fontWeight:800,color:C.accent}}>{rt.title}</div>
+            <div style={{fontSize:"10px",color:C.td,marginTop:"4px"}}>{rt.days?.length||0}일 구성 · {(rt.days||[]).reduce((sum,d)=>sum+(d.exercises?.length||0),0)}개 운동</div>
+          </div>
+          <div style={{display:"flex",gap:"6px"}}>
+            <Btn variant="ghost" onClick={()=>onEdit(rt)}>수정</Btn>
+            <Btn variant="danger" onClick={()=>onDelete(rt.id)}>삭제</Btn>
+          </div>
+        </div>
+        {rt.desc && <div style={{fontSize:"11px",color:C.tm,marginTop:"8px"}}>{rt.desc}</div>}
+      </div>)}
+    </div>
+  </div>;
+}
 const trTabs=[["sessions","수업"],["routine","루틴"],["info","건강"],["attend","출석"],["rank","랭킹"]];
 const clTabs=[["sessions","수업"],["routine","루틴"],["info","건강"],["attend","출석"],["rank","랭킹"]];
 
@@ -1044,7 +1247,7 @@ function Trainer({data,setData,onLogout,syncStatus,onRefreshFromSupabase}){
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const presets = Array.isArray(data?.presets) ? data.presets : [];
   const cl=sel?clients.find(c=>c.id===sel):null;
-  const sv=useCallback(d=>{const migrated=migrateData(d);setData(migrated);localStorage.setItem(SK,JSON.stringify(migrated));},[setData]);
+  const sv=useCallback(d=>{const migrated=touchAppData(data,d);saveLocalSnapshot(migrated);setData(migrated);},[data,setData]);
 
   if(!cl) return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"11px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"10px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"2px"}}>with ZIAGOGYM</div><div style={{fontSize:"16px",fontWeight:800,marginTop:"2px"}}>회원 관리</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await uploadLocalDataToSupabase(data);alert("Supabase 업로드 완료");}catch(e){console.error(e);alert("업로드 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"Supabase 업로드"}</Btn><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await onRefreshFromSupabase?.();alert("Supabase 최신 데이터를 불러왔습니다.");}catch(e){console.error(e);alert("불러오기 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"데이터 불러오기"}</Btn><Btn variant="secondary" onClick={()=>setTab(tab==="rank"?"sessions":"rank")} style={{fontSize:"10px",padding:"6px 10px"}}>{tab==="rank"?"회원목록":"랭킹"}</Btn><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px"}}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
@@ -1089,7 +1292,7 @@ function Client({data,setData,clientId,onLogout,syncStatus}){
   const presets = Array.isArray(data?.presets) ? data.presets : [];
   const cl=clients.find(c=>c.id===clientId);const [tab,setTab]=useState("sessions");const [showIBF,setShowIBF]=useState(false);const [showGF,setShowGF]=useState(false);
   if(!cl) return <div style={{padding:"40px",textAlign:"center",color:C.td}}>회원 정보 없음</div>;
-  const sv=d=>{const migrated=migrateData(d);setData(migrated);localStorage.setItem(SK,JSON.stringify(migrated));};
+  const sv=d=>{const migrated=touchAppData(data,d);saveLocalSnapshot(migrated);setData(migrated);};
   return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,gap:"8px",flexWrap:"wrap"}}><div><div style={{fontSize:"10px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"9px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"1px"}}>with ZIAGOGYM</div><div style={{fontSize:"15px",fontWeight:800,marginTop:"2px"}}>{cl.name}님</div></div><div style={{display:"flex",gap:"6px",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
     <div style={{display:"flex",gap:"2px",padding:"10px 20px",background:C.card,borderBottom:`1px solid ${C.border}`,overflowX:"auto"}}>{clTabs.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{padding:"7px 12px",borderRadius:"10px",border:"none",fontSize:"11px",fontWeight:tab===k?700:500,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif",whiteSpace:"nowrap",background:tab===k?C.ag:"transparent",color:tab===k?C.accent:C.td}}>{l}</button>)}</div>
@@ -1185,23 +1388,23 @@ async function loadAppDataFromSupabase(){
   (sessionsRes.data||[]).forEach(s=>{
     if(!sessionsByClient[s.client_id]) sessionsByClient[s.client_id]=[];
     sessionsByClient[s.client_id].push({
-      id:s.id,date:s.session_date,trainerMemo:s.trainer_memo||"",clientMemo:s.client_memo||"",quickCheck:!!s.quick_check,exercises:Array.isArray(s.exercises)?s.exercises:[]
+      id:s.id,date:s.session_date,trainerMemo:s.trainer_memo||"",clientMemo:s.client_memo||"",quickCheck:!!s.quick_check,exercises:Array.isArray(s.exercises)?s.exercises:[],updatedAt:s.updated_at||nowIso(),version:metaNum(s.version,1),deletedAt:s.deleted_at||null
     });
   });
   const attendanceByClient={};
   (attendanceRes.data||[]).forEach(a=>{
     if(!attendanceByClient[a.client_id]) attendanceByClient[a.client_id]=[];
-    attendanceByClient[a.client_id].push({date:a.attendance_date,strength:a.strength||0,cardio:a.cardio||0});
+    attendanceByClient[a.client_id].push({id:ensureAttendanceUuid(a.id, a.client_id, a.attendance_date),date:a.attendance_date,strength:a.strength||0,cardio:a.cardio||0,updatedAt:a.updated_at||a.updatedAt||nowIso(),version:metaNum(a.version,1),deletedAt:a.deleted_at||a.deletedAt||null});
   });
   const inbodyByClient={};
   (inbodyRes.data||[]).forEach(r=>{
     if(!inbodyByClient[r.client_id]) inbodyByClient[r.client_id]=[];
-    inbodyByClient[r.client_id].push({id:r.id,date:r.record_date,height:r.height,weight:r.weight,muscle:r.muscle,fatPct:r.fat_pct,fatMass:r.fat_mass,bodyWater:r.body_water,protein:r.protein,bmr:r.bmr,visceralFat:r.visceral_fat,waist:r.waist,score:r.score});
+    inbodyByClient[r.client_id].push({id:r.id,date:r.record_date,height:r.height,weight:r.weight,muscle:r.muscle,fatPct:r.fat_pct,fatMass:r.fat_mass,bodyWater:r.body_water,protein:r.protein,bmr:r.bmr,visceralFat:r.visceral_fat,waist:r.waist,score:r.score,updatedAt:r.updated_at||nowIso(),version:metaNum(r.version,1),deletedAt:r.deleted_at||null});
   });
   const routinesByClient={};
   const sharedRoutines=[];
   (routinesRes.data||[]).forEach(r=>{
-    const mapped={id:r.id,title:r.title,desc:r.description||"",days:r.days||[]};
+    const mapped={id:r.id,title:r.title,desc:r.description||"",days:r.days||[],updatedAt:r.updated_at||nowIso(),version:metaNum(r.version,1),deletedAt:r.deleted_at||null};
     if(r.client_id){
       if(!routinesByClient[r.client_id]) routinesByClient[r.client_id]=[];
       routinesByClient[r.client_id].push(mapped);
@@ -1211,11 +1414,11 @@ async function loadAppDataFromSupabase(){
   });
 
   return migrateData({
-    trainer: trainerRes.data ? {loginId: trainerRes.data.username, password: trainerRes.data.password} : undefined,
-    presets: (presetsRes.data||[]).map(p=>({id:p.id,name:p.name,category:p.category,photo:p.photo||"",youtube:p.youtube||""})),
+    trainer: trainerRes.data ? {loginId: trainerRes.data.username, password: trainerRes.data.password, updatedAt: trainerRes.data.updated_at||nowIso(), version: metaNum(trainerRes.data.version,1)} : undefined,
+    presets: (presetsRes.data||[]).map(p=>({id:p.id,name:p.name,category:p.category,photo:p.photo||"",youtube:p.youtube||"",updatedAt:p.updated_at||nowIso(),version:metaNum(p.version,1),deletedAt:p.deleted_at||null})),
     customRoutines: sharedRoutines,
     clients: (clientsRes.data||[]).map(c=>({
-      id:c.id,name:c.name||"",pin:c.pin||"",phone:c.phone||"",gender:c.gender||"",age:c.age||"",
+      id:c.id,name:c.name||"",pin:c.pin||"",phone:c.phone||"",gender:c.gender||"",age:c.age||"",updatedAt:c.updated_at||nowIso(),version:metaNum(c.version,1),
       goals:{targetWeight:c.goal_target_weight||"",targetFatPct:c.goal_target_fat_pct||"",targetMuscle:c.goal_target_muscle||""},
       notes:{injuries:c.injuries||"",surgery:c.surgery||"",conditions:c.conditions||"",experience:c.experience||""},
       pt:{startDate:c.pt_start_date||"",endDate:c.pt_end_date||"",totalSessions:c.pt_total_sessions||0,baseCompletedSessions:c.pt_base_completed_sessions||0},
@@ -1230,29 +1433,10 @@ async function loadAppDataFromSupabase(){
 async function uploadLocalDataToSupabase(appData){
   const safe=migrateData(appData);
 
-  const { data: existingClientsData, error: existingClientsError } = await supabase.from("clients").select("id");
-  if(existingClientsError) throw existingClientsError;
-  const remoteIds = new Set((existingClientsData||[]).map(x=>x.id));
-  const localIds = new Set((safe.clients||[]).map(c=>c.id).filter(Boolean));
-  const staleIds = [...remoteIds].filter(id=>!localIds.has(id));
-
   const { error: trainerError } = await supabase
     .from("trainer_settings")
-    .upsert({id:1,username:safe.trainer.loginId,password:safe.trainer.password},{onConflict:"id"});
+    .upsert({id:1,username:safe.trainer.loginId,password:safe.trainer.password,updated_at:safe.trainer.updatedAt||nowIso(),version:metaNum(safe.trainer.version,1)},{onConflict:"id"});
   if(trainerError) throw trainerError;
-
-  if(staleIds.length){
-    const delSessions=await supabase.from("sessions").delete().in("client_id", staleIds);
-    if(delSessions.error) throw delSessions.error;
-    const delAttendance=await supabase.from("attendance").delete().in("client_id", staleIds);
-    if(delAttendance.error) throw delAttendance.error;
-    const delInbody=await supabase.from("inbody_records").delete().in("client_id", staleIds);
-    if(delInbody.error) throw delInbody.error;
-    const delRoutines=await supabase.from("custom_routines").delete().in("client_id", staleIds);
-    if(delRoutines.error && !String(delRoutines.error.message||"").includes("client_id")) throw delRoutines.error;
-    const delClients=await supabase.from("clients").delete().in("id", staleIds);
-    if(delClients.error) throw delClients.error;
-  }
 
   const clientRows=safe.clients.map(c=>({
     id:c.id,name:c.name,pin:String(c.pin||""),phone:c.phone||"",gender:c.gender||"",age:c.age||null,
@@ -1260,7 +1444,8 @@ async function uploadLocalDataToSupabase(appData){
     injuries:c.notes?.injuries||"",surgery:c.notes?.surgery||"",conditions:c.notes?.conditions||"",experience:c.notes?.experience||"",
     pt_start_date:c.pt?.startDate||null,pt_end_date:c.pt?.endDate||null,
     pt_total_sessions:Number(c.pt?.totalSessions||0),
-    pt_base_completed_sessions:Number(c.pt?.baseCompletedSessions||0)
+    pt_base_completed_sessions:Number(c.pt?.baseCompletedSessions||0),
+    updated_at:c.updatedAt||nowIso(),version:metaNum(c.version,1),deleted_at:c.deletedAt||null
   }));
   if(clientRows.length){
     const {error}=await supabase.from("clients").upsert(clientRows,{onConflict:"id"});
@@ -1268,67 +1453,54 @@ async function uploadLocalDataToSupabase(appData){
   }
 
   const presetRows=(safe.presets||[]).map(p=>({
-    id:p.id,name:p.name,category:p.category||"기타",photo:p.photo||"",youtube:p.youtube||""
+    id:p.id,name:p.name,category:p.category||"기타",photo:p.photo||"",youtube:p.youtube||"",
+    updated_at:p.updatedAt||nowIso(),version:metaNum(p.version,1),deleted_at:p.deletedAt||null
   }));
   if(presetRows.length){
     const {error}=await supabase.from("presets").upsert(presetRows,{onConflict:"id"});
     if(error) throw error;
   }
 
-  const clientIds = safe.clients.map(c=>c.id).filter(Boolean);
-  const sessionRows=[]; const attendanceRows=[]; const inbodyRows=[]; const routineRows=[];
+  const sessionRows=[]; const inbodyRows=[]; const routineRows=[]; const attendanceRows=[];
   (safe.customRoutines||[]).forEach(r=>routineRows.push({
-    id:r.id,client_id:null,title:r.title||"",description:r.desc||"",days:r.days||[]
+    id:r.id,client_id:null,title:r.title||"",description:r.desc||"",days:r.days||[],updated_at:r.updatedAt||nowIso(),version:metaNum(r.version,1),deleted_at:r.deletedAt||null
   }));
   safe.clients.forEach(c=>{
     (c.sessions||[]).forEach(s=>sessionRows.push({
       id:s.id,client_id:c.id,session_date:s.date,trainer_memo:s.trainerMemo||"",
-      client_memo:s.clientMemo||"",quick_check:!!s.quickCheck,exercises:s.exercises||[]
-    }));
-    (c.attendance||[]).forEach(a=>attendanceRows.push({
-      client_id:c.id,attendance_date:a.date,strength:a.strength||0,cardio:a.cardio||0
+      client_memo:s.clientMemo||"",quick_check:!!s.quickCheck,exercises:s.exercises||[],updated_at:s.updatedAt||nowIso(),version:metaNum(s.version,1),deleted_at:s.deletedAt||null
     }));
     (c.inbodyHistory||[]).forEach(r=>inbodyRows.push({
       id:r.id,client_id:c.id,record_date:r.date,height:r.height||null,weight:r.weight||null,
       muscle:r.muscle||null,fat_pct:r.fatPct||null,fat_mass:r.fatMass||null,body_water:r.bodyWater||null,
-      protein:r.protein||null,bmr:r.bmr||null,visceral_fat:r.visceralFat||null,waist:r.waist||null,score:r.score||null
+      protein:r.protein||null,bmr:r.bmr||null,visceral_fat:r.visceralFat||null,waist:r.waist||null,score:r.score||null,
+      updated_at:r.updatedAt||nowIso(),version:metaNum(r.version,1),deleted_at:r.deletedAt||null
     }));
     (c.customRoutines||[]).forEach(r=>routineRows.push({
-      id:r.id,client_id:c.id,title:r.title||"",description:r.desc||"",days:r.days||[]
+      id:r.id,client_id:c.id,title:r.title||"",description:r.desc||"",days:r.days||[],updated_at:r.updatedAt||nowIso(),version:metaNum(r.version,1),deleted_at:r.deletedAt||null
+    }));
+    (c.attendance||[]).forEach(a=>attendanceRows.push({
+      id:ensureAttendanceUuid(a.id, c.id, a.date),client_id:c.id,attendance_date:a.date,strength:a.strength||0,cardio:a.cardio||0,updated_at:a.updatedAt||nowIso(),version:metaNum(a.version,1),deleted_at:a.deletedAt||null
     }));
   });
 
-  if(clientIds.length){
-    const del1=await supabase.from("sessions").delete().in("client_id", clientIds);
-    if(del1.error) throw del1.error;
-    const del2=await supabase.from("attendance").delete().in("client_id", clientIds);
-    if(del2.error) throw del2.error;
-    const del3=await supabase.from("inbody_records").delete().in("client_id", clientIds);
-    if(del3.error) throw del3.error;
-    const del4=await supabase.from("custom_routines").delete().in("client_id", clientIds);
-    if(del4.error && !String(del4.error.message||"").includes("client_id")) throw del4.error;
-  }
-  const delSharedRoutines=await supabase.from("custom_routines").delete().is("client_id", null);
-  if(delSharedRoutines.error && !String(delSharedRoutines.error.message||"").includes("client_id")) throw delSharedRoutines.error;
-
   if(sessionRows.length){
-    const {error}=await supabase.from("sessions").insert(sessionRows);
-    if(error) throw error;
-  }
-  if(attendanceRows.length){
-    const {error}=await supabase.from("attendance").insert(attendanceRows);
+    const {error}=await supabase.from("sessions").upsert(sessionRows,{onConflict:"id"});
     if(error) throw error;
   }
   if(inbodyRows.length){
-    const {error}=await supabase.from("inbody_records").insert(inbodyRows);
+    const {error}=await supabase.from("inbody_records").upsert(inbodyRows,{onConflict:"id"});
     if(error) throw error;
   }
   if(routineRows.length){
-    const {error}=await supabase.from("custom_routines").insert(routineRows);
-    if(error && !String(error.message||"").includes("client_id")) throw error;
+    const {error}=await supabase.from("custom_routines").upsert(routineRows,{onConflict:"id"});
+    if(error) throw error;
+  }
+  if(attendanceRows.length){
+    const {error}=await supabase.from("attendance").upsert(attendanceRows,{onConflict:"id"});
+    if(error) throw error;
   }
 }
-
 const defData = {
   trainer: { loginId: "hyungmin", password: "VangoFit!2026#", pin: "1234", failedAttempts: 0, lockUntil: 0 },
   presets: mergePresetsWithDB([]),
@@ -1338,41 +1510,66 @@ const defData = {
 
 export default function App(){
   const [user,setUser]=useState(null);
-  const [data,setData]=useState(()=>{try{const s=localStorage.getItem(SK);return migrateData(s?JSON.parse(s):defData);}catch{return migrateData(defData);}});
+  const [data,setData]=useState(()=>loadBestLocalSnapshot(defData));
   const [loading,setLoading]=useState(true);
   const [syncStatus,setSyncStatus]=useState("idle");
   const firstSyncSkipRef = useRef(true);
   const syncTimerRef = useRef(null);
+  const latestDataRef = useRef(data);
+  const syncInFlightRef = useRef(false);
+  const pendingSyncRef = useRef(false);
+
+  useEffect(()=>{ latestDataRef.current = data; },[data]);
 
   useEffect(()=>{let mounted=true;(async()=>{try{
+      const localBase=loadBestLocalSnapshot(defData);
       const loaded=await loadAppDataFromSupabase();
       if(mounted){
-        const finalData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData);
+        const remoteData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData);
+        const finalData=mergeAppData(localBase, remoteData);
         setData(finalData);
-        localStorage.setItem(SK,JSON.stringify(finalData));
+        saveLocalSnapshot(finalData);
       }
     }catch{
-      try{
-        const s=localStorage.getItem(SK);
-        const fallback=migrateData(s?JSON.parse(s):defData);
-        if(mounted) setData(fallback);
-      }catch{
-        if(mounted) setData(migrateData(defData));
-      }
+      if(mounted) setData(loadBestLocalSnapshot(defData));
     }finally{
       if(mounted) setLoading(false);
     }})(); return ()=>{mounted=false;};},[]);
 
   useEffect(()=>{
     if(loading) return;
-    try{localStorage.setItem(SK,JSON.stringify(migrateData(data)));}catch{}
+    saveLocalSnapshot(data);
   },[data,loading]);
+
+  const performUpload=useCallback(async(snapshot)=>{
+    if(syncInFlightRef.current){
+      pendingSyncRef.current = true;
+      return;
+    }
+    try{
+      syncInFlightRef.current = true;
+      setSyncStatus("syncing");
+      await uploadLocalDataToSupabase(snapshot);
+      setSyncStatus("saved");
+    }catch(e){
+      console.error("자동 동기화 실패", e);
+      setSyncStatus("error");
+    }finally{
+      syncInFlightRef.current = false;
+      if(pendingSyncRef.current){
+        pendingSyncRef.current = false;
+        const latest=latestDataRef.current;
+        if(latest) performUpload(latest);
+      }
+    }
+  },[]);
 
   const refreshFromSupabase=useCallback(async()=>{
     const loaded=await loadAppDataFromSupabase();
-    const finalData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData);
-    setData(finalData);
-    localStorage.setItem(SK,JSON.stringify(finalData));
+    const remoteData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData);
+    const merged=mergeAppData(latestDataRef.current, remoteData);
+    saveLocalSnapshot(merged);
+    setData(merged);
     setSyncStatus("saved");
   },[]);
 
@@ -1384,18 +1581,9 @@ export default function App(){
     }
     if(syncTimerRef.current) clearTimeout(syncTimerRef.current);
     setSyncStatus("pending");
-    syncTimerRef.current = setTimeout(async ()=>{
-      try{
-        setSyncStatus("syncing");
-        await uploadLocalDataToSupabase(data);
-        setSyncStatus("saved");
-      }catch(e){
-        console.error("자동 동기화 실패", e);
-        setSyncStatus("error");
-      }
-    }, 900);
+    syncTimerRef.current = setTimeout(()=>{ performUpload(latestDataRef.current); }, 1200);
     return ()=>{ if(syncTimerRef.current) clearTimeout(syncTimerRef.current); };
-  },[data,loading]);
+  },[data,loading,performUpload]);
 
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.text,fontFamily:"'Noto Sans KR',sans-serif"}}>데이터 불러오는 중...</div>;
   if(!user) return <Login onLogin={setUser} data={data} setData={setData}/>;
