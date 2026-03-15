@@ -404,6 +404,146 @@ function ensureTesterClient(clients=[]){
   return [...clients, createTesterClient()];
 }
 
+function parseLocalDate(dateStr){
+  return new Date(`${dateStr}T00:00:00`);
+}
+function currentMonthInfo(){
+  const now=new Date();
+  return {prefix:`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,"0")}`,year:now.getFullYear(),month:now.getMonth(),today:now};
+}
+function getElapsedOpenDaysInCurrentMonth(){
+  const {year,month,today}=currentMonthInfo();
+  let count=0;
+  for(let d=1; d<=today.getDate(); d++){ if(new Date(year,month,d).getDay()!==0) count++; }
+  return count;
+}
+function getMonthAttendance(client,prefix){
+  return dedupeAttendance(client?.attendance||[]).filter(a=>a?.date?.startsWith(prefix));
+}
+function getMonthExerciseTime(client,prefix){
+  return getMonthAttendance(client,prefix).reduce((sum,a)=>sum+(Number(a.strength)||0)+(Number(a.cardio)||0),0);
+}
+function getBestOpenDayStreakThisMonth(client,prefix){
+  const {year,month,today}=currentMonthInfo();
+  const attended=new Set(getMonthAttendance(client,prefix).map(a=>a.date));
+  let best=0,cur=0;
+  for(let d=1; d<=today.getDate(); d++){
+    const dateObj=new Date(year,month,d);
+    if(dateObj.getDay()===0) continue;
+    const iso=`${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+    if(attended.has(iso)){ cur+=1; best=Math.max(best,cur); } else { cur=0; }
+  }
+  return best;
+}
+function getRankings(data){
+  const clients=Array.isArray(data?.clients)?data.clients:[];
+  const {prefix}=currentMonthInfo();
+  const elapsedOpenDays=Math.max(1,getElapsedOpenDaysInCurrentMonth());
+
+  const attendanceRate=clients.map(c=>{
+    const days=getMonthAttendance(c,prefix).length;
+    return {clientId:c.id,name:c.name,value:Math.round((days/elapsedOpenDays)*100),days};
+  }).sort((a,b)=>b.value-a.value||b.days-a.days||a.name.localeCompare(b.name)).slice(0,10);
+
+  const exerciseTime=clients.map(c=>({clientId:c.id,name:c.name,value:getMonthExerciseTime(c,prefix)}))
+    .sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,10);
+
+  const streak=clients.map(c=>({clientId:c.id,name:c.name,value:getBestOpenDayStreakThisMonth(c,prefix)}))
+    .sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,10);
+
+  const liftRanks=(gender)=>{
+    const rows=[];
+    clients.filter(c=>(c.gender||"").toLowerCase()===gender).forEach(c=>{
+      (c.sessions||[]).forEach(s=>{
+        (s.exercises||[]).forEach(ex=>{
+          (ex.sets||[]).forEach(set=>{
+            const weight=Number(set?.weight)||0;
+            if(weight>0) rows.push({clientId:c.id,name:c.name,exercise:ex.name,weight,date:s.date});
+          });
+        });
+      });
+    });
+    const bestMap=new Map();
+    rows.forEach(r=>{
+      const key=`${r.clientId}__${r.exercise}`;
+      const prev=bestMap.get(key);
+      if(!prev||r.weight>prev.weight||(r.weight===prev.weight&&String(r.date)>String(prev.date))) bestMap.set(key,r);
+    });
+    return Array.from(bestMap.values()).sort((a,b)=>b.weight-a.weight||a.exercise.localeCompare(b.exercise)||a.name.localeCompare(b.name)).slice(0,10);
+  };
+
+  const avgMap=new Map();
+  clients.forEach(c=>{
+    (c.sessions||[]).forEach(s=>{
+      (s.exercises||[]).forEach(ex=>{
+        const name=String(ex.name||"").trim();
+        if(!name) return;
+        if(!avgMap.has(name)) avgMap.set(name,{exercise:name,appearances:0,totalWeight:0,weightCount:0});
+        const row=avgMap.get(name);
+        row.appearances += 1;
+        (ex.sets||[]).forEach(set=>{
+          const weight=Number(set?.weight)||0;
+          if(weight>0){ row.totalWeight += weight; row.weightCount += 1; }
+        });
+      });
+    });
+  });
+  const averageWeightTop=Array.from(avgMap.values()).map(r=>({...r,value:r.weightCount?Math.round((r.totalWeight/r.weightCount)*10)/10:0}))
+    .sort((a,b)=>b.appearances-a.appearances||b.value-a.value||a.exercise.localeCompare(b.exercise)).slice(0,10);
+
+  return {prefix,elapsedOpenDays,attendanceRate,exerciseTime,streak,maleLifts:liftRanks("male"),femaleLifts:liftRanks("female"),averageWeightTop};
+}
+function RankSection({title,subtitle,rows,renderValue,emptyText,currentClientId}){
+  return <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:"16px",padding:"14px",marginBottom:"12px"}}>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"end",gap:"8px",marginBottom:"10px",flexWrap:"wrap"}}>
+      <div>
+        <div style={{fontSize:"15px",fontWeight:800}}>{title}</div>
+        {subtitle&&<div style={{fontSize:"10px",color:C.td,marginTop:"3px",lineHeight:1.5}}>{subtitle}</div>}
+      </div>
+      <BG color={C.info}>TOP 10</BG>
+    </div>
+    {!rows?.length?<div style={{padding:"18px",textAlign:"center",background:C.bg,borderRadius:"12px",color:C.td,fontSize:"12px"}}>{emptyText||"표시할 데이터가 없습니다."}</div>:<div style={{display:"grid",gap:"6px"}}>{rows.map((row,idx)=>{
+      const isMine=currentClientId&&row.clientId===currentClientId;
+      const mainLabel=row.displayLabel || (row.exercise?`${row.exercise} - ${row.name}님`:`${row.name}님`);
+      return <div key={`${title}-${idx}-${row.clientId||row.exercise||row.name}`} style={{display:"grid",gridTemplateColumns:"46px 1fr auto",alignItems:"center",gap:"10px",padding:"10px 12px",borderRadius:"12px",background:isMine?C.ag:C.bg,border:`1px solid ${isMine?C.accent:C.border}`}}>
+        <div style={{fontWeight:900,color:idx<3?C.accent:C.tm,fontSize:"13px"}}>{idx+1}위</div>
+        <div style={{minWidth:0}}>
+          <div style={{fontSize:"12px",fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{mainLabel}</div>
+          {row.subtext&&<div style={{fontSize:"10px",color:C.td,marginTop:"2px"}}>{row.subtext}</div>}
+        </div>
+        <div style={{fontSize:"12px",fontWeight:800,color:C.accent,textAlign:"right",whiteSpace:"nowrap"}}>{renderValue(row)}</div>
+      </div>;
+    })}</div>}
+  </div>;
+}
+function RankingView({data,currentClientId}){
+  const ranks=getRankings(data);
+  const monthLabel=`${Number(ranks.prefix.slice(5,7))}월`;
+  const rankTabs=[
+    {key:"attendance",label:"출석률",title:"이번 달 출석률",subtitle:`이번 달 경과 영업일 ${ranks.elapsedOpenDays}일 기준`,rows:ranks.attendanceRate,renderValue:(r)=>`${r.value}%`,emptyText:"이번 달 출석 데이터가 없습니다."},
+    {key:"time",label:"운동시간",title:"이번 달 운동시간",subtitle:"근력운동 시간 + 유산소 시간 합계",rows:ranks.exerciseTime,renderValue:(r)=>`${r.value}분`,emptyText:"이번 달 운동시간 데이터가 없습니다."},
+    {key:"streak",label:"연속기록",title:"이번 달 연속 운동기록",subtitle:"일요일은 휴무일이라 카운팅되지 않고, 연속 기록도 끊지 않습니다.",rows:ranks.streak,renderValue:(r)=>`${r.value}일`,emptyText:"이번 달 연속 기록 데이터가 없습니다."},
+    {key:"male",label:"남자 최고중량",title:"남성 최고중량",subtitle:"수업기록 세트 중 최고중량 기준",rows:ranks.maleLifts,renderValue:(r)=>`${r.weight}kg`,emptyText:"남성 최고중량 데이터가 없습니다."},
+    {key:"female",label:"여자 최고중량",title:"여성 최고중량",subtitle:"수업기록 세트 중 최고중량 기준",rows:ranks.femaleLifts,renderValue:(r)=>`${r.weight}kg`,emptyText:"여성 최고중량 데이터가 없습니다."},
+    {key:"average",label:"평균중량",title:"자주 하는 종목 평균중량",subtitle:"전체 수업기록에서 가장 자주 나온 종목 10개 기준",rows:ranks.averageWeightTop.map(r=>({...r,displayLabel:r.exercise,subtext:`등장 ${r.appearances}회`})),renderValue:(r)=>`${r.value}kg`,emptyText:"평균중량 데이터가 없습니다."},
+  ];
+  const [activeRank,setActiveRank]=useState("attendance");
+  const activeSection=rankTabs.find(t=>t.key===activeRank) || rankTabs[0];
+  return <div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"8px",marginBottom:"12px",flexWrap:"wrap"}}>
+      <div>
+        <div style={{fontSize:"18px",fontWeight:800}}>랭킹</div>
+        <div style={{fontSize:"10px",color:C.td,marginTop:"3px"}}>{monthLabel} 회원 데이터 기준 · 출석률은 이번 달 경과 영업일 기준</div>
+      </div>
+      <BG color={C.info}>항목별 보기</BG>
+    </div>
+    <div style={{display:"flex",gap:"8px",overflowX:"auto",paddingBottom:"8px",marginBottom:"12px",WebkitOverflowScrolling:"touch"}}>
+      {rankTabs.map(tab=><button key={tab.key} onClick={()=>setActiveRank(tab.key)} style={{flex:"0 0 auto",border:`1px solid ${activeRank===tab.key?C.accent:C.border}`,background:activeRank===tab.key?C.ag:C.bg,color:activeRank===tab.key?C.accent:C.text,borderRadius:"999px",padding:"10px 14px",fontSize:"12px",fontWeight:800,cursor:"pointer",whiteSpace:"nowrap"}}>{tab.label}</button>)}
+    </div>
+    <RankSection title={activeSection.title} subtitle={activeSection.subtitle} rows={activeSection.rows} currentClientId={currentClientId} renderValue={activeSection.renderValue} emptyText={activeSection.emptyText} />
+  </div>;
+}
+
 
 function ExDetailModal({preset,onClose}) {
   if(!preset) return null;
@@ -868,8 +1008,8 @@ function RtView({client,presets,isTrainer,onSaveCustom,onDeleteCustom,sharedRout
   </>;
 }
 
-const trTabs=[["sessions","수업"],["routine","루틴"],["info","건강"],["attend","출석"]];
-const clTabs=[["sessions","수업"],["routine","루틴"],["info","건강"],["attend","출석"]];
+const trTabs=[["sessions","수업"],["routine","루틴"],["info","건강"],["attend","출석"],["rank","랭킹"]];
+const clTabs=[["sessions","수업"],["routine","루틴"],["info","건강"],["attend","출석"],["rank","랭킹"]];
 
 function TrainerSecurityModal({trainer,onSave,onClose}){
   const [loginId,setLoginId]=useState(trainer?.loginId||"hyungmin");
@@ -907,10 +1047,9 @@ function Trainer({data,setData,onLogout,syncStatus,onRefreshFromSupabase}){
   const sv=useCallback(d=>{const migrated=migrateData(d);setData(migrated);localStorage.setItem(SK,JSON.stringify(migrated));},[setData]);
 
   if(!cl) return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"11px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"10px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"2px"}}>with ZIAGOGYM</div><div style={{fontSize:"16px",fontWeight:800,marginTop:"2px"}}>회원 관리</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await uploadLocalDataToSupabase(data);alert("Supabase 업로드 완료");}catch(e){console.error(e);alert("업로드 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"Supabase 업로드"}</Btn><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await onRefreshFromSupabase?.();alert("Supabase 최신 데이터를 불러왔습니다.");}catch(e){console.error(e);alert("불러오기 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"데이터 불러오기"}</Btn><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px"}}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
-    <div style={{padding:"20px",maxWidth:"700px",margin:"0 auto"}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:"12px"}}><div style={{display:"flex",gap:"6px",alignItems:"center"}}><span style={{fontSize:"16px",fontWeight:800}}>전체 회원</span><BG>{clients.length}명</BG></div><Btn onClick={()=>setShowAC(true)} style={{padding:"8px 14px",fontSize:"12px"}}>+ 새 회원</Btn></div>
-      {clients.map(c=>{const completed=getCompletedSessions(c);const remaining=getRemainingSessions(c);return <div key={c.id} style={{background:C.card,borderRadius:"12px",padding:"12px",border:`1px solid ${C.border}`,cursor:"pointer",marginBottom:"6px"}} onClick={()=>{setSel(c.id);setTab("sessions");}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"10px"}}><div><div style={{fontSize:"13px",fontWeight:700}}>{c.name}</div><div style={{fontSize:"10px",color:C.td}}>{c.phone||"-"} · PIN {c.pin||"-"}</div></div><div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.accent}}>{completed}/{c.pt?.totalSessions||0}</div><div style={{fontSize:"8px",color:C.td}}>PT 진행</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.warn}}>{remaining}</div><div style={{fontSize:"8px",color:C.td}}>남은 횟수</div></div><Btn variant="ghost" onClick={e=>{e.stopPropagation();setEditClient(c);}} style={{padding:"4px 8px",fontSize:"10px",color:C.info}}>수정</Btn><Btn variant="danger" onClick={e=>{e.stopPropagation();if(confirm("삭제?"))sv({...data,clients:data.clients.filter(x=>x.id!==c.id)});}} style={{padding:"3px 6px"}}>✕</Btn></div></div></div>;})}
-    </div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"11px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"10px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"2px"}}>with ZIAGOGYM</div><div style={{fontSize:"16px",fontWeight:800,marginTop:"2px"}}>회원 관리</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await uploadLocalDataToSupabase(data);alert("Supabase 업로드 완료");}catch(e){console.error(e);alert("업로드 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"Supabase 업로드"}</Btn><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await onRefreshFromSupabase?.();alert("Supabase 최신 데이터를 불러왔습니다.");}catch(e){console.error(e);alert("불러오기 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"데이터 불러오기"}</Btn><Btn variant="secondary" onClick={()=>setTab(tab==="rank"?"sessions":"rank")} style={{fontSize:"10px",padding:"6px 10px"}}>{tab==="rank"?"회원목록":"랭킹"}</Btn><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px"}}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
+    <div style={{padding:"20px",maxWidth:"700px",margin:"0 auto"}}>{tab==="rank"?<RankingView data={data} />:<><div style={{display:"flex",justifyContent:"space-between",marginBottom:"12px"}}><div style={{display:"flex",gap:"6px",alignItems:"center"}}><span style={{fontSize:"16px",fontWeight:800}}>전체 회원</span><BG>{clients.length}명</BG></div><Btn onClick={()=>setShowAC(true)} style={{padding:"8px 14px",fontSize:"12px"}}>+ 새 회원</Btn></div>
+      {clients.map(c=>{const completed=getCompletedSessions(c);const remaining=getRemainingSessions(c);return <div key={c.id} style={{background:C.card,borderRadius:"12px",padding:"12px",border:`1px solid ${C.border}`,cursor:"pointer",marginBottom:"6px"}} onClick={()=>{setSel(c.id);setTab("sessions");}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"10px"}}><div><div style={{fontSize:"13px",fontWeight:700}}>{c.name}</div><div style={{fontSize:"10px",color:C.td}}>{c.phone||"-"} · PIN {c.pin||"-"}</div></div><div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.accent}}>{completed}/{c.pt?.totalSessions||0}</div><div style={{fontSize:"8px",color:C.td}}>PT 진행</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.warn}}>{remaining}</div><div style={{fontSize:"8px",color:C.td}}>남은 횟수</div></div><Btn variant="ghost" onClick={e=>{e.stopPropagation();setEditClient(c);}} style={{padding:"4px 8px",fontSize:"10px",color:C.info}}>수정</Btn><Btn variant="danger" onClick={e=>{e.stopPropagation();if(confirm("삭제?"))sv({...data,clients:data.clients.filter(x=>x.id!==c.id)});}} style={{padding:"3px 6px"}}>✕</Btn></div></div></div>;})}</>}</div>
     {showAC&&<AddCl onSave={nc=>{sv({...data,clients:[...data.clients,nc]});setShowAC(false);}} onClose={()=>setShowAC(false)} pins={clients.map(c=>c.pin)}/>}
     {showPM&&<PresetMgr presets={presets} onSave={p=>{sv({...data,presets:p});setShowPM(false);}} onClose={()=>setShowPM(false)}/>}
     {showSec&&<TrainerSecurityModal trainer={data.trainer} onSave={(trainerPatch)=>{sv({...data,trainer:{...data.trainer,...trainerPatch}});setShowSec(false);}} onClose={()=>setShowSec(false)}/>}
@@ -936,7 +1075,7 @@ function Trainer({data,setData,onLogout,syncStatus,onRefreshFromSupabase}){
       </>}
       {tab==="routine"&&<RtView client={cl} presets={presets} isTrainer sharedRoutines={data.customRoutines||[]} onSaveCustom={r=>sv({...data,customRoutines:(data.customRoutines||[]).some(x=>x.id===r.id)?(data.customRoutines||[]).map(x=>x.id===r.id?r:x):[...(data.customRoutines||[]),r]})} onDeleteCustom={id=>sv({...data,customRoutines:(data.customRoutines||[]).filter(x=>x.id!==id)})} />}
       {tab==="info"&&<InbodyView client={cl} isTrainer onEdit={()=>setShowGF(true)} onAddRecord={()=>setShowIBF(true)}/>}
-      {tab==="attend"&&<AttendanceView client={cl} isTrainer onSave={att=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,attendance:att})})} onSavePT={pt=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,pt})})}/>}
+      {tab==="attend"&&<AttendanceView client={cl} isTrainer onSave={att=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,attendance:att})})} onSavePT={pt=>sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,pt})})}/>}{tab==="rank"&&<RankingView data={data} currentClientId={sel} />}
     </div>
     {showSF&&<SesForm presets={presets} session={editS} onSave={s=>{sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,sessions:c.sessions.find(x=>x.id===s.id)?c.sessions.map(x=>x.id===s.id?s:x):[s,...c.sessions]})});setShowSF(false);setEditS(null);}} onClose={()=>{setShowSF(false);setEditS(null);}}/>}
     {showGF&&<GoalsForm client={cl} onSave={(g,a,go,n)=>{sv({...data,clients:clients.map(c=>c.id!==sel?c:{...c,gender:g,age:a,goals:go,notes:n})});setShowGF(false);}} onClose={()=>setShowGF(false)}/>}
@@ -958,7 +1097,7 @@ function Client({data,setData,clientId,onLogout,syncStatus}){
       {tab==="sessions"&&<><span style={{fontSize:"16px",fontWeight:800,display:"block",marginBottom:"10px"}}>수업 기록</span>{!cl.sessions.length?<div style={{textAlign:"center",padding:"50px",color:C.td}}>수업 기록이 없습니다</div>:[...cl.sessions].sort((a,b)=>b.date.localeCompare(a.date)).map(s=><SesDet key={s.id} session={s} presets={presets} isClient onSaveClientMemo={(sid,m)=>sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,sessions:c.sessions.map(x=>x.id===sid?{...x,clientMemo:m}:x)})})}/>)}</>}
       {tab==="routine"&&<RtView client={cl} presets={presets} sharedRoutines={data.customRoutines||[]} />}
       {tab==="info"&&<InbodyView client={cl} onEdit={()=>setShowGF(true)} onAddRecord={()=>setShowIBF(true)}/>}
-      {tab==="attend"&&<AttendanceView client={cl} onSave={att=>sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,attendance:att})})} onSavePT={()=>{}}/>}
+      {tab==="attend"&&<AttendanceView client={cl} onSave={att=>sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,attendance:att})})} onSavePT={()=>{}}/>}{tab==="rank"&&<RankingView data={data} currentClientId={clientId} />}
     </div>
     {showIBF&&<InbodyForm onSave={rec=>{sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,inbodyHistory:[...(c.inbodyHistory||[]).filter(x=>x.id!==rec.id),rec]})});setShowIBF(false);}} onClose={()=>setShowIBF(false)} title="인바디 기록"/>}
     {showGF&&<GoalsForm client={cl} isClient onSave={(g,a,go,n)=>{sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,gender:g,age:a,goals:go,notes:n})});setShowGF(false);}} onClose={()=>setShowGF(false)}/>}
