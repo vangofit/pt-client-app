@@ -7,6 +7,8 @@ const SK = "pt-manager-data";
 const BK = "pt-manager-data-backup";
 const gid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 const nowIso = () => new Date().toISOString();
+const normalizePinValue = (v="") => String(v ?? "").replace(/\D/g, "").slice(0, 4);
+const normalizePhoneValue = (v="") => String(v ?? "").replace(/\D/g, "");
 
 const uuidHex = (input="") => {
   let h1 = 0x811c9dc5, h2 = 0x811c9dc5;
@@ -297,29 +299,8 @@ function migrateData(raw){
   const presets=mergePresetsWithDB((safe.presets||[]).map(p=>({photo:"",youtube:"",...p})));
   const customRoutines=normalizeRoutines(Array.isArray(safe.customRoutines)?safe.customRoutines:[]);
   const sourceClients=(safe.clients&&safe.clients.length?safe.clients:importedClients)||[];
-  const clients=ensureTesterClient(sourceClients.map((c,idx)=>({
-    id:c.id||`c${idx+1}`,
-    name:c.name||"",
-    pin:c.pin||"",
-    phone:c.phone||"",
-    gender:c.gender||"",
-    age:c.age||"",
-    goals:{targetWeight:"",targetFatPct:"",targetMuscle:"",...(c.goals||{})},
-    notes:{injuries:"",surgery:"",conditions:"",experience:"",...(c.notes||{})},
-    pt:{
-      startDate:"",
-      endDate:"",
-      totalSessions:0,
-      baseCompletedSessions:c?.pt?.baseCompletedSessions??c?.pt?.legacyCompletedSessions??c?.pt?.completedSessions??0,
-      ...(c.pt||{})
-    },
-    updatedAt:c.updatedAt||c.updated_at||nowIso(),
-    version:metaNum(c.version,1),
-    attendance:Array.isArray(c.attendance)?dedupeAttendance(c.attendance, c.id||`c${idx+1}`):[],
-    inbodyHistory:normalizeInbody(Array.isArray(c.inbodyHistory)?c.inbodyHistory:[]),
-    customRoutines:normalizeRoutines(Array.isArray(c.customRoutines)?c.customRoutines:[]),
-    sessions:normalizeSessions(Array.isArray(c.sessions)?c.sessions:[]),
-  })));
+  const normalizedClients=sourceClients.map((c,idx)=>normalizeClientEntity(c, idx));
+  const clients=ensureTesterClient(dedupeClients(normalizedClients));
   return {trainer,presets,customRoutines,clients};
 }
 
@@ -366,13 +347,62 @@ function mergeClientData(localClient={}, remoteClient={}){
     sessions: normalizeSessions(mergeList(remote.sessions||[], local.sessions||[])),
   };
 }
+function getClientIdentityKey(client={}){
+  const pin=normalizePinValue(client?.pin);
+  if(pin) return `pin:${pin}`;
+  const phone=normalizePhoneValue(client?.phone);
+  if(phone) return `phone:${phone}`;
+  return `id:${client?.id||gid()}`;
+}
+function normalizeClientEntity(client={}, idx=0){
+  return {
+    id:client.id||`c${idx+1}`,
+    name:String(client.name||"").trim(),
+    pin:normalizePinValue(client.pin),
+    phone:String(client.phone||"").trim(),
+    gender:client.gender||"",
+    age:client.age||"",
+    goals:{targetWeight:"",targetFatPct:"",targetMuscle:"",...(client.goals||{})},
+    notes:{injuries:"",surgery:"",conditions:"",experience:"",...(client.notes||{})},
+    pt:{
+      startDate:"",
+      endDate:"",
+      totalSessions:0,
+      baseCompletedSessions:client?.pt?.baseCompletedSessions??client?.pt?.legacyCompletedSessions??client?.pt?.completedSessions??0,
+      ...(client.pt||{})
+    },
+    updatedAt:client.updatedAt||client.updated_at||nowIso(),
+    version:metaNum(client.version,1),
+    attendance:Array.isArray(client.attendance)?dedupeAttendance(client.attendance, client.id||`c${idx+1}`):[],
+    inbodyHistory:normalizeInbody(Array.isArray(client.inbodyHistory)?client.inbodyHistory:[]),
+    customRoutines:normalizeRoutines(Array.isArray(client.customRoutines)?client.customRoutines:[]),
+    sessions:normalizeSessions(Array.isArray(client.sessions)?client.sessions:[]),
+  };
+}
+function dedupeClients(clients=[]){
+  const mergedByIdentity=new Map();
+  (clients||[]).forEach((client,idx)=>{
+    const normalized=normalizeClientEntity(client, idx);
+    const identityKey=getClientIdentityKey(normalized);
+    const prev=mergedByIdentity.get(identityKey);
+    mergedByIdentity.set(identityKey, prev ? mergeClientData(prev, normalized) : normalized);
+  });
+  const byId=new Map();
+  Array.from(mergedByIdentity.values()).forEach((client)=>{
+    const existing=byId.get(client.id);
+    byId.set(client.id, existing ? mergeClientData(existing, client) : client);
+  });
+  return Array.from(byId.values())
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||''), 'ko'));
+}
+
 function mergeAppData(localRaw, remoteRaw){
   const local=migrateData(localRaw);
   const remote=migrateData(remoteRaw);
   const localById=new Map((local.clients||[]).map(c=>[c.id,c]));
   const remoteById=new Map((remote.clients||[]).map(c=>[c.id,c]));
   const allIds=Array.from(new Set([...localById.keys(), ...remoteById.keys()]));
-  const clients=allIds.map(id=>mergeClientData(localById.get(id)||{}, remoteById.get(id)||{}));
+  const clients=dedupeClients(allIds.map(id=>mergeClientData(localById.get(id)||{}, remoteById.get(id)||{})));
   const mergeTop=(localList=[], remoteList=[])=>{
     const localMap=new Map((localList||[]).map(item=>[item?.id||`${item?.category}-${item?.name}`, item]));
     const remoteMap=new Map((remoteList||[]).map(item=>[item?.id||`${item?.category}-${item?.name}`, item]));
@@ -923,7 +953,7 @@ function AddCl({onSave,onClose,pins}){
         if(!n.trim()){alert("이름을 입력해주세요.");return;}
         if(pin.length!==4){alert("PIN은 4자리여야 합니다.");return;}
         if(dup){alert("중복된 PIN입니다.");return;}
-        onSave({id:gid(),name:n.trim(),phone:ph,pin,gender:"",age:"",goals:{targetWeight:"",targetFatPct:"",targetMuscle:""},notes:{injuries:"",surgery:"",conditions:"",experience:""},pt:{startDate:"",endDate:"",totalSessions:0,baseCompletedSessions:0},attendance:[],inbodyHistory:[],customRoutines:[],sessions:[]});
+        onSave({id:gid(),name:n.trim(),phone:ph.trim(),pin:normalizePinValue(pin),gender:"",age:"",goals:{targetWeight:"",targetFatPct:"",targetMuscle:""},notes:{injuries:"",surgery:"",conditions:"",experience:""},pt:{startDate:"",endDate:"",totalSessions:0,baseCompletedSessions:0},attendance:[],inbodyHistory:[],customRoutines:[],sessions:[]});
       }} style={{width:"100%"}}>등록</Btn>
     </div>
   </div>;
@@ -946,7 +976,7 @@ function EditCl({client,onSave,onClose,pins=[]}){
           if(!n.trim()){alert("이름을 입력해주세요.");return;}
           if(pin.length!==4){alert("PIN은 4자리여야 합니다.");return;}
           if(dup){alert("중복된 PIN입니다.");return;}
-          onSave({...client,name:n.trim(),phone:ph.trim(),pin});
+          onSave({...client,name:n.trim(),phone:ph.trim(),pin:normalizePinValue(pin)});
         }} style={{flex:1}}>저장</Btn>
         <Btn variant="secondary" onClick={onClose} style={{flex:1}}>취소</Btn>
       </div>
@@ -1335,9 +1365,12 @@ function Login({onLogin,data,setData}){
         failTrainerLogin();
       }
     } else {
-      const clients = Array.isArray(data?.clients) ? data.clients : [];
-      const c=clients.find(c=>String(c.pin)===String(pin));
-      if(c) onLogin({type:"client",clientId:c.id});
+      const clients = Array.isArray(data?.clients) ? dedupeClients(data.clients) : [];
+      const normalizedPin = normalizePinValue(pin);
+      if(normalizedPin.length!==4){ setErr("회원 PIN 4자리를 입력해주세요."); return; }
+      const matches=clients.filter(c=>normalizePinValue(c.pin)===normalizedPin);
+      if(matches.length===1) onLogin({type:"client",clientId:matches[0].id,pin:normalizedPin});
+      else if(matches.length>1) setErr("같은 PIN 회원이 2명 이상 있어 로그인이 차단되었습니다. 트레이너에게 문의해주세요.");
       else setErr("회원 PIN을 확인해주세요.");
     }
   };
@@ -1356,7 +1389,7 @@ function Login({onLogin,data,setData}){
         {err&&<div style={{color:C.danger,fontSize:"11px",marginBottom:"6px"}}>{err}</div>}
         <Btn onClick={()=>go("trainer")} style={{width:"100%",marginBottom:"8px"}}>로그인</Btn><Btn variant="ghost" onClick={()=>{setMode("select");setErr("");setTrainerId("");setTrainerPassword("");}} style={{width:"100%"}}>← 돌아가기</Btn>
       </> : <>
-        <input style={{...bi,padding:"13px 16px",marginBottom:"10px"}} type="password" placeholder="회원 PIN" value={pin} onChange={e=>{setPin(e.target.value);setErr("");}} onKeyDown={e=>e.key==="Enter"&&go("client")} />
+        <input style={{...bi,padding:"13px 16px",marginBottom:"10px"}} type="password" placeholder="회원 PIN" value={pin} onChange={e=>{setPin(normalizePinValue(e.target.value));setErr("");}} onKeyDown={e=>e.key==="Enter"&&go("client")} maxLength={4} />
         {err&&<div style={{color:C.danger,fontSize:"11px",marginBottom:"6px"}}>{err}</div>}
         <Btn onClick={()=>go("client")} style={{width:"100%",marginBottom:"8px"}}>로그인</Btn><Btn variant="ghost" onClick={()=>{setMode("select");setErr("");setPin("");}} style={{width:"100%"}}>← 돌아가기</Btn>
       </>}
@@ -1585,8 +1618,20 @@ export default function App(){
     return ()=>{ if(syncTimerRef.current) clearTimeout(syncTimerRef.current); };
   },[data,loading,performUpload]);
 
+  const resolvedClient = user?.type==="client"
+    ? (data.clients||[]).find(c=>c.id===user.clientId) || (data.clients||[]).find(c=>normalizePinValue(c.pin)===normalizePinValue(user.pin)) || null
+    : null;
+
+  useEffect(()=>{
+    if(user?.type!=="client") return;
+    if(resolvedClient && resolvedClient.id!==user.clientId){
+      setUser(prev=>prev?.type==="client" ? {...prev, clientId: resolvedClient.id, pin: normalizePinValue(resolvedClient.pin)} : prev);
+    }
+  },[user,resolvedClient]);
+
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.text,fontFamily:"'Noto Sans KR',sans-serif"}}>데이터 불러오는 중...</div>;
   if(!user) return <Login onLogin={setUser} data={data} setData={setData}/>;
   if(user.type==="trainer") return <Trainer data={data} setData={setData} onLogout={()=>setUser(null)} syncStatus={syncStatus} onRefreshFromSupabase={refreshFromSupabase}/>;
-  return <Client data={data} setData={setData} clientId={user.clientId} onLogout={()=>setUser(null)} syncStatus={syncStatus}/>;
+  if(!resolvedClient) return <Login onLogin={setUser} data={data} setData={setData}/>;
+  return <Client data={data} setData={setData} clientId={resolvedClient.id} onLogout={()=>setUser(null)} syncStatus={syncStatus}/>;
 }
