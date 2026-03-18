@@ -1239,7 +1239,7 @@ function TrainerSecurityModal({trainer,onSave,onClose}){
   </div>;
 }
 
-function Trainer({data,setData,onLogout,syncStatus,onRefreshFromSupabase}){
+function Trainer({data,onPersist,onLogout,syncStatus,onRefreshFromSupabase,readOnlyMode=false,readOnlyReason=""}){
   const [manualSyncBusy,setManualSyncBusy]=useState(false);
   const [sel,setSel]=useState(null);const [tab,setTab]=useState("sessions");
   const [showSF,setShowSF]=useState(false);const [editS,setEditS]=useState(null);
@@ -1247,10 +1247,10 @@ function Trainer({data,setData,onLogout,syncStatus,onRefreshFromSupabase}){
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const presets = Array.isArray(data?.presets) ? data.presets : [];
   const cl=sel?clients.find(c=>c.id===sel):null;
-  const sv=useCallback(d=>{const migrated=touchAppData(data,d);saveLocalSnapshot(migrated);setData(migrated);},[data,setData]);
+  const sv=useCallback((d)=>{ if(readOnlyMode){ alert(readOnlyReason || "현재 기기에서는 수정이 잠시 제한되어 있습니다. 데스크탑에서 다시 시도해주세요."); return; } onPersist?.(d); },[onPersist,readOnlyMode,readOnlyReason]);
 
   if(!cl) return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"11px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"10px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"2px"}}>with ZIAGOGYM</div><div style={{fontSize:"16px",fontWeight:800,marginTop:"2px"}}>회원 관리</div></div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await uploadLocalDataToSupabase(data);alert("Supabase 업로드 완료");}catch(e){console.error(e);alert("업로드 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"Supabase 업로드"}</Btn><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await onRefreshFromSupabase?.();alert("Supabase 최신 데이터를 불러왔습니다.");}catch(e){console.error(e);alert("불러오기 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"데이터 불러오기"}</Btn><Btn variant="secondary" onClick={()=>setTab(tab==="rank"?"sessions":"rank")} style={{fontSize:"10px",padding:"6px 10px"}}>{tab==="rank"?"회원목록":"랭킹"}</Btn><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px"}}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px"}}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,flexWrap:"wrap",gap:"6px"}}><div><div style={{fontSize:"11px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"10px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"2px"}}>with ZIAGOGYM</div><div style={{fontSize:"16px",fontWeight:800,marginTop:"2px"}}>회원 관리</div>{readOnlyMode?<div style={{fontSize:"10px",color:C.warn,marginTop:"6px"}}>{readOnlyReason||"읽기 전용 모드"}</div>:null}</div><div style={{display:"flex",gap:"6px",flexWrap:"wrap",alignItems:"center"}}><BG color={readOnlyMode?C.warn:syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{readOnlyMode?"읽기 전용":syncStatus==="saved"?"저장 완료":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"대기 중"}</BG><Btn variant="secondary" onClick={async()=>{if(manualSyncBusy) return; try{setManualSyncBusy(true);await onRefreshFromSupabase?.();alert("Supabase 최신 데이터를 불러왔습니다.");}catch(e){console.error(e);alert("불러오기 실패: "+(e.message||"알 수 없는 오류"));}finally{setManualSyncBusy(false);}}} style={{fontSize:"10px",padding:"6px 10px",opacity:manualSyncBusy?0.6:1}}>{manualSyncBusy?"처리 중...":"데이터 불러오기"}</Btn><Btn variant="secondary" onClick={()=>setTab(tab==="rank"?"sessions":"rank")} style={{fontSize:"10px",padding:"6px 10px"}}>{tab==="rank"?"회원목록":"랭킹"}</Btn><Btn variant="secondary" onClick={()=>setShowPM(true)} style={{fontSize:"10px",padding:"6px 10px",opacity:readOnlyMode?0.5:1}} disabled={readOnlyMode}>종목관리</Btn><Btn variant="secondary" onClick={()=>setShowSec(true)} style={{fontSize:"10px",padding:"6px 10px",opacity:readOnlyMode?0.5:1}} disabled={readOnlyMode}>보안설정</Btn><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
     <div style={{padding:"20px",maxWidth:"700px",margin:"0 auto"}}>{tab==="rank"?<RankingView data={data} />:<><div style={{display:"flex",justifyContent:"space-between",marginBottom:"12px"}}><div style={{display:"flex",gap:"6px",alignItems:"center"}}><span style={{fontSize:"16px",fontWeight:800}}>전체 회원</span><BG>{clients.length}명</BG></div><Btn onClick={()=>setShowAC(true)} style={{padding:"8px 14px",fontSize:"12px"}}>+ 새 회원</Btn></div>
       {clients.map(c=>{const completed=getCompletedSessions(c);const remaining=getRemainingSessions(c);return <div key={c.id} style={{background:C.card,borderRadius:"12px",padding:"12px",border:`1px solid ${C.border}`,cursor:"pointer",marginBottom:"6px"}} onClick={()=>{setSel(c.id);setTab("sessions");}} onMouseEnter={e=>e.currentTarget.style.borderColor=C.accent} onMouseLeave={e=>e.currentTarget.style.borderColor=C.border}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:"10px"}}><div><div style={{fontSize:"13px",fontWeight:700}}>{c.name}</div><div style={{fontSize:"10px",color:C.td}}>{c.phone||"-"} · PIN {c.pin||"-"}</div></div><div style={{display:"flex",alignItems:"center",gap:"10px"}}><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.accent}}>{completed}/{c.pt?.totalSessions||0}</div><div style={{fontSize:"8px",color:C.td}}>PT 진행</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:700,color:C.warn}}>{remaining}</div><div style={{fontSize:"8px",color:C.td}}>남은 횟수</div></div><Btn variant="ghost" onClick={e=>{e.stopPropagation();setEditClient(c);}} style={{padding:"4px 8px",fontSize:"10px",color:C.info}}>수정</Btn><Btn variant="danger" onClick={e=>{e.stopPropagation();if(confirm("삭제?"))sv({...data,clients:data.clients.filter(x=>x.id!==c.id)});}} style={{padding:"3px 6px"}}>✕</Btn></div></div></div>;})}</>}</div>
     {showAC&&<AddCl onSave={nc=>{sv({...data,clients:[...data.clients,nc]});setShowAC(false);}} onClose={()=>setShowAC(false)} pins={clients.map(c=>c.pin)}/>}
@@ -1287,14 +1287,14 @@ function Trainer({data,setData,onLogout,syncStatus,onRefreshFromSupabase}){
   </div>;
 }
 
-function Client({data,setData,clientId,onLogout,syncStatus}){
+function Client({data,onPersist,clientId,onLogout,syncStatus,readOnlyMode=false,readOnlyReason=""}){
   const clients = Array.isArray(data?.clients) ? data.clients : [];
   const presets = Array.isArray(data?.presets) ? data.presets : [];
   const cl=clients.find(c=>c.id===clientId);const [tab,setTab]=useState("sessions");const [showIBF,setShowIBF]=useState(false);const [showGF,setShowGF]=useState(false);
   if(!cl) return <div style={{padding:"40px",textAlign:"center",color:C.td}}>회원 정보 없음</div>;
-  const sv=d=>{const migrated=touchAppData(data,d);saveLocalSnapshot(migrated);setData(migrated);};
+  const sv=(d)=>{ if(readOnlyMode){ alert(readOnlyReason || "현재 기기에서는 수정이 잠시 제한되어 있습니다. 데스크탑에서 다시 시도해주세요."); return; } onPersist?.(d); };
   return <div style={{fontFamily:"'Noto Sans KR',sans-serif",background:C.bg,color:C.text,minHeight:"100vh"}}>
-    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,gap:"8px",flexWrap:"wrap"}}><div><div style={{fontSize:"10px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"9px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"1px"}}>with ZIAGOGYM</div><div style={{fontSize:"15px",fontWeight:800,marginTop:"2px"}}>{cl.name}님</div></div><div style={{display:"flex",gap:"6px",alignItems:"center"}}><BG color={syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{syncStatus==="saved"?"자동 저장됨":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"변경 감지"}</BG><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
+    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 20px",borderBottom:`1px solid ${C.border}`,background:C.card,gap:"8px",flexWrap:"wrap"}}><div><div style={{fontSize:"10px",color:C.accent,letterSpacing:"2px",fontWeight:800}}>VANGOFIT</div><div style={{fontSize:"9px",color:C.tm,letterSpacing:"1px",fontWeight:700,marginTop:"1px"}}>with ZIAGOGYM</div><div style={{fontSize:"15px",fontWeight:800,marginTop:"2px"}}>{cl.name}님</div>{readOnlyMode?<div style={{fontSize:"10px",color:C.warn,marginTop:"6px"}}>{readOnlyReason||"읽기 전용 모드"}</div>:null}</div><div style={{display:"flex",gap:"6px",alignItems:"center"}}><BG color={readOnlyMode?C.warn:syncStatus==="saved"?C.success:syncStatus==="error"?C.danger:syncStatus==="syncing"?C.info:C.warn}>{readOnlyMode?"읽기 전용":syncStatus==="saved"?"저장 완료":syncStatus==="error"?"저장 실패":syncStatus==="syncing"?"저장 중...":"대기 중"}</BG><Btn variant="secondary" onClick={onLogout} style={{fontSize:"10px",padding:"6px 10px"}}>로그아웃</Btn></div></div>
     <div style={{display:"flex",gap:"2px",padding:"10px 20px",background:C.card,borderBottom:`1px solid ${C.border}`,overflowX:"auto"}}>{clTabs.map(([k,l])=><button key={k} onClick={()=>setTab(k)} style={{padding:"7px 12px",borderRadius:"10px",border:"none",fontSize:"11px",fontWeight:tab===k?700:500,cursor:"pointer",fontFamily:"'Noto Sans KR',sans-serif",whiteSpace:"nowrap",background:tab===k?C.ag:"transparent",color:tab===k?C.accent:C.td}}>{l}</button>)}</div>
     <div style={{padding:"20px",maxWidth:"500px",margin:"0 auto"}}>
       {tab==="sessions"&&<><span style={{fontSize:"16px",fontWeight:800,display:"block",marginBottom:"10px"}}>수업 기록</span>{!cl.sessions.length?<div style={{textAlign:"center",padding:"50px",color:C.td}}>수업 기록이 없습니다</div>:[...cl.sessions].sort((a,b)=>b.date.localeCompare(a.date)).map(s=><SesDet key={s.id} session={s} presets={presets} isClient onSaveClientMemo={(sid,m)=>sv({...data,clients:clients.map(c=>c.id!==clientId?c:{...c,sessions:c.sessions.map(x=>x.id===sid?{...x,clientMemo:m}:x)})})}/>)}</>}
@@ -1483,21 +1483,30 @@ async function uploadLocalDataToSupabase(appData){
       id:ensureAttendanceUuid(a.id, c.id, a.date),client_id:c.id,attendance_date:a.date,strength:a.strength||0,cardio:a.cardio||0,updated_at:a.updatedAt||nowIso(),version:metaNum(a.version,1),deleted_at:a.deletedAt||null
     }));
   });
-
-  if(sessionRows.length){
-    const {error}=await supabase.from("sessions").upsert(sessionRows,{onConflict:"id"});
+// 중복 ID 제거 (같은 ID가 여러 번 있으면 마지막 것만 유지)
+  const dedup = (rows) => {
+    const map = new Map();
+    rows.forEach(r => { if(r.id) map.set(r.id, r); });
+    return [...map.values()];
+  };
+  const uniqueSessionRows = dedup(sessionRows);
+  const uniqueInbodyRows = dedup(inbodyRows);
+  const uniqueRoutineRows = dedup(routineRows);
+  const uniqueAttendanceRows = dedup(attendanceRows);
+ if(uniqueSessionRows.length){
+    const {error}=await supabase.from("sessions").upsert(uniqueSessionRows,{onConflict:"id"});
     if(error) throw error;
   }
-  if(inbodyRows.length){
-    const {error}=await supabase.from("inbody_records").upsert(inbodyRows,{onConflict:"id"});
+  if(uniqueInbodyRows.length){
+    const {error}=await supabase.from("inbody_records").upsert(uniqueInbodyRows,{onConflict:"id"});
     if(error) throw error;
   }
-  if(routineRows.length){
-    const {error}=await supabase.from("custom_routines").upsert(routineRows,{onConflict:"id"});
+  if(uniqueRoutineRows.length){
+    const {error}=await supabase.from("custom_routines").upsert(uniqueRoutineRows,{onConflict:"id"});
     if(error) throw error;
   }
-  if(attendanceRows.length){
-    const {error}=await supabase.from("attendance").upsert(attendanceRows,{onConflict:"id"});
+  if(uniqueAttendanceRows.length){
+    const {error}=await supabase.from("attendance").upsert(uniqueAttendanceRows,{onConflict:"id"});
     if(error) throw error;
   }
 }
@@ -1521,17 +1530,42 @@ export default function App(){
 
   useEffect(()=>{ latestDataRef.current = data; },[data]);
 
+  const isProbablyMobile = typeof navigator !== "undefined" && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent || "");
+  const [serverReady,setServerReady]=useState(false);
+  const [readOnlyMode,setReadOnlyMode]=useState(false);
+  const [readOnlyReason,setReadOnlyReason]=useState("");
+
   useEffect(()=>{let mounted=true;(async()=>{try{
       const localBase=loadBestLocalSnapshot(defData);
       const loaded=await loadAppDataFromSupabase();
+      const hasRemoteClients=Array.isArray(loaded?.clients) && loaded.clients.length>0;
       if(mounted){
-        const remoteData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData);
-        const finalData=mergeAppData(localBase, remoteData);
-        setData(finalData);
-        saveLocalSnapshot(finalData);
+        if(hasRemoteClients){
+          const remoteData=migrateData(loaded);
+          setData(remoteData);
+          saveLocalSnapshot(remoteData);
+          setServerReady(true);
+          setReadOnlyMode(false);
+          setReadOnlyReason("");
+          setSyncStatus("saved");
+        }else{
+          const fallback=loadBestLocalSnapshot(localBase);
+          setData(fallback);
+          setServerReady(false);
+          setReadOnlyMode(true);
+          setReadOnlyReason("서버 데이터를 확인하지 못해 현재는 읽기 전용 모드입니다. 저장/동기화는 잠시 제한됩니다.");
+          setSyncStatus("error");
+        }
       }
-    }catch{
-      if(mounted) setData(loadBestLocalSnapshot(defData));
+    }catch(e){
+      console.error("초기 데이터 로드 실패", e);
+      if(mounted){
+        setData(loadBestLocalSnapshot(defData));
+        setServerReady(false);
+        setReadOnlyMode(true);
+        setReadOnlyReason("서버 연결 확인 전에는 읽기 전용 모드입니다. 저장/동기화는 잠시 제한됩니다.");
+        setSyncStatus("error");
+      }
     }finally{
       if(mounted) setLoading(false);
     }})(); return ()=>{mounted=false;};},[]);
@@ -1541,52 +1575,55 @@ export default function App(){
     saveLocalSnapshot(data);
   },[data,loading]);
 
-  const performUpload=useCallback(async(snapshot)=>{
-    if(syncInFlightRef.current){
-      pendingSyncRef.current = true;
-      return;
+  const applyAndPersist=useCallback(async(nextRaw)=>{
+    const hardBlocked = readOnlyMode || isProbablyMobile;
+    if(hardBlocked){
+      alert(readOnlyReason || "현재 기기에서는 수정이 잠시 제한되어 있습니다. 데스크탑에서 다시 시도해주세요.");
+      return false;
     }
+    if(syncInFlightRef.current){
+      alert("이전 저장이 진행 중입니다. 잠시 후 다시 시도해주세요.");
+      return false;
+    }
+    const prev=latestDataRef.current;
+    const next=touchAppData(prev, nextRaw);
+    saveLocalSnapshot(next);
+    setData(next);
     try{
       syncInFlightRef.current = true;
       setSyncStatus("syncing");
-      await uploadLocalDataToSupabase(snapshot);
+      await uploadLocalDataToSupabase(next);
       setSyncStatus("saved");
+      return true;
     }catch(e){
-      console.error("자동 동기화 실패", e);
+      console.error("저장 실패", e);
+      saveLocalSnapshot(prev);
+      setData(prev);
       setSyncStatus("error");
+      alert("저장에 실패해 이전 상태로 복구했습니다. 서버 연결을 확인하고 다시 시도해주세요.");
+      return false;
     }finally{
       syncInFlightRef.current = false;
-      if(pendingSyncRef.current){
-        pendingSyncRef.current = false;
-        const latest=latestDataRef.current;
-        if(latest) performUpload(latest);
-      }
     }
-  },[]);
+  },[isProbablyMobile, readOnlyMode, readOnlyReason]);
 
   const refreshFromSupabase=useCallback(async()=>{
     const loaded=await loadAppDataFromSupabase();
-    const remoteData=(loaded?.clients&&loaded.clients.length)?loaded:migrateData(defData);
-    const merged=mergeAppData(latestDataRef.current, remoteData);
-    saveLocalSnapshot(merged);
-    setData(merged);
+    const hasRemoteClients=Array.isArray(loaded?.clients) && loaded.clients.length>0;
+    if(!hasRemoteClients) throw new Error("원격 회원 데이터를 불러오지 못했습니다.");
+    const remoteData=migrateData(loaded);
+    saveLocalSnapshot(remoteData);
+    setData(remoteData);
+    setServerReady(true);
+    setReadOnlyMode(false);
+    setReadOnlyReason("");
     setSyncStatus("saved");
   },[]);
 
-  useEffect(()=>{
-    if(loading) return;
-    if(firstSyncSkipRef.current){
-      firstSyncSkipRef.current = false;
-      return;
-    }
-    if(syncTimerRef.current) clearTimeout(syncTimerRef.current);
-    setSyncStatus("pending");
-    syncTimerRef.current = setTimeout(()=>{ performUpload(latestDataRef.current); }, 1200);
-    return ()=>{ if(syncTimerRef.current) clearTimeout(syncTimerRef.current); };
-  },[data,loading,performUpload]);
-
   if(loading) return <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:C.bg,color:C.text,fontFamily:"'Noto Sans KR',sans-serif"}}>데이터 불러오는 중...</div>;
   if(!user) return <Login onLogin={setUser} data={data} setData={setData}/>;
-  if(user.type==="trainer") return <Trainer data={data} setData={setData} onLogout={()=>setUser(null)} syncStatus={syncStatus} onRefreshFromSupabase={refreshFromSupabase}/>;
-  return <Client data={data} setData={setData} clientId={user.clientId} onLogout={()=>setUser(null)} syncStatus={syncStatus}/>;
+  const effectiveReadOnly = readOnlyMode || isProbablyMobile;
+  const effectiveReason = isProbablyMobile ? "모바일/아이패드에서는 데이터 손실 방지를 위해 수정이 잠시 제한됩니다. 데스크탑에서 수정해주세요." : readOnlyReason;
+  if(user.type==="trainer") return <Trainer data={data} onPersist={applyAndPersist} onLogout={()=>setUser(null)} syncStatus={syncStatus} onRefreshFromSupabase={refreshFromSupabase} readOnlyMode={effectiveReadOnly} readOnlyReason={effectiveReason}/>;
+  return <Client data={data} onPersist={applyAndPersist} clientId={user.clientId} onLogout={()=>setUser(null)} syncStatus={syncStatus} readOnlyMode={effectiveReadOnly} readOnlyReason={effectiveReason}/>;
 }
